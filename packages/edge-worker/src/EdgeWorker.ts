@@ -111,6 +111,7 @@ export class EdgeWorker extends EventEmitter {
 	private sharedApplicationServer: SharedApplicationServer;
 	private cyrusHome: string;
 	private childToParentAgentSession: Map<string, string> = new Map(); // Maps child agentSessionId to parent agentSessionId
+	private rawLinearClients: Map<string, LinearClient> = new Map(); // Raw clients - proxies delegate to these
 	private procedureRouter: ProcedureRouter; // Intelligent workflow routing
 	private configWatcher?: FSWatcher; // File watcher for config.json
 	private configPath?: string; // Path to config.json file
@@ -207,11 +208,13 @@ export class EdgeWorker extends EventEmitter {
 				this.repositories.set(repo.id, resolvedRepo);
 
 				// Create issue tracker for this repository's workspace
-				const linearClient = new LinearClient({
+				// Store raw client in Map, create stable proxy that looks it up
+				const rawClient = new LinearClient({
 					accessToken: repo.linearToken,
 				});
-				const wrappedClient = this.wrapLinearClient(linearClient, repo.id);
-				const issueTracker = new LinearIssueTrackerService(wrappedClient);
+				this.rawLinearClients.set(repo.id, rawClient);
+				const clientProxy = this.createLinearClientProxy(repo.id);
+				const issueTracker = new LinearIssueTrackerService(clientProxy);
 				this.issueTrackers.set(repo.id, issueTracker);
 
 				// Create AgentSessionManager for this repository with parent session lookup and resume callback
@@ -797,12 +800,13 @@ export class EdgeWorker extends EventEmitter {
 				// Add to internal map
 				this.repositories.set(repo.id, resolvedRepo);
 
-				// Create issue tracker
-				const linearClient = new LinearClient({
+				// Create issue tracker - store raw client, create stable proxy
+				const rawClient = new LinearClient({
 					accessToken: repo.linearToken,
 				});
-				const wrappedClient = this.wrapLinearClient(linearClient, repo.id);
-				const issueTracker = new LinearIssueTrackerService(wrappedClient);
+				this.rawLinearClients.set(repo.id, rawClient);
+				const clientProxy = this.createLinearClientProxy(repo.id);
+				const issueTracker = new LinearIssueTrackerService(clientProxy);
 				this.issueTrackers.set(repo.id, issueTracker);
 
 				// Create AgentSessionManager with same pattern as constructor
@@ -885,15 +889,14 @@ export class EdgeWorker extends EventEmitter {
 				// Update stored config
 				this.repositories.set(repo.id, resolvedRepo);
 
-				// If token changed, recreate issue tracker
+				// If token changed, just update the raw client - proxy automatically uses it
 				if (oldRepo.linearToken !== repo.linearToken) {
-					console.log(`  🔑 Token changed, recreating issue tracker`);
-					const linearClient = new LinearClient({
+					console.log(`  🔑 Token changed, updating raw client`);
+					const newRawClient = new LinearClient({
 						accessToken: repo.linearToken,
 					});
-					const wrappedClient = this.wrapLinearClient(linearClient, repo.id);
-					const issueTracker = new LinearIssueTrackerService(wrappedClient);
-					this.issueTrackers.set(repo.id, issueTracker);
+					this.rawLinearClients.set(repo.id, newRawClient);
+					// No need to update issueTracker - the proxy automatically uses the new client
 				}
 
 				// If active status changed
@@ -5302,23 +5305,39 @@ ${input.userComment}
 	}
 
 	/**
-	 * Wrap LinearClient with Proxy that auto-refreshes token on 401
+	 * Create a Proxy that always delegates to the current raw LinearClient.
+	 *
+	 * This is the stable pointer - it never changes. On every call, it looks up
+	 * the current client from rawLinearClients Map. When token refreshes, we just
+	 * update the Map, and all existing references automatically use the new client.
 	 *
 	 * Uses promise coalescing in refreshLinearToken to handle concurrent
 	 * 401 errors - all concurrent callers wait for a single refresh.
 	 */
-	private wrapLinearClient(
-		client: LinearClient,
-		repositoryId: string,
-	): LinearClient {
-		return new Proxy(client, {
-			get: (target, prop) => {
-				const value = target[prop as keyof LinearClient];
+	private createLinearClientProxy(repositoryId: string): LinearClient {
+		// Create a proxy that always looks up the current client
+		return new Proxy({} as LinearClient, {
+			get: (_, prop) => {
+				// Always get the CURRENT client from the Map
+				const currentClient = this.rawLinearClients.get(repositoryId);
+				if (!currentClient) {
+					throw new Error(
+						`No LinearClient found for repository ${repositoryId}`,
+					);
+				}
+
+				const value = currentClient[prop as keyof LinearClient];
 				if (typeof value !== "function") return value;
 
 				return async (...args: any[]) => {
+					// Get current client again (in case it changed)
+					const client = this.rawLinearClients.get(repositoryId)!;
+
 					try {
-						return await (value as any).apply(target, args);
+						return await (client[prop as keyof LinearClient] as any).apply(
+							client,
+							args,
+						);
 					} catch (error) {
 						// Only handle 401 token expiration errors
 						if (!this.isTokenExpiredError(error)) {
@@ -5329,21 +5348,33 @@ ${input.userComment}
 
 						// Refresh token (coalesced - concurrent calls share one refresh)
 						const refreshResult = await this.refreshLinearToken(repositoryId);
+						console.log(
+							`[EdgeWorker] Refresh result for ${repositoryId}: success=${refreshResult.success}`,
+						);
 						if (!refreshResult.success) {
 							console.error(`[EdgeWorker] Token refresh failed`);
 							throw error;
 						}
 
-						// Retry with the refreshed client
-						const freshTracker = this.issueTrackers.get(repositoryId);
-						if (freshTracker && "linearClient" in freshTracker) {
-							const freshClient = (freshTracker as any).linearClient;
+						// Retry - the Map now has the new client with new token
+						console.log(
+							`[EdgeWorker] Retrying with refreshed token for ${String(prop)}...`,
+						);
+						const freshClient = this.rawLinearClients.get(repositoryId);
+						if (!freshClient) {
+							console.error(
+								`[EdgeWorker] No client found in rawLinearClients for ${repositoryId}`,
+							);
+							throw error;
+						}
+						try {
 							return await (
 								freshClient[prop as keyof LinearClient] as any
 							).apply(freshClient, args);
+						} catch (retryError) {
+							console.error(`[EdgeWorker] Retry failed:`, retryError);
+							throw retryError;
 						}
-
-						throw error;
 					}
 				};
 			},
@@ -5501,13 +5532,11 @@ ${input.userComment}
 					repository.linearToken = data.access_token;
 					repository.linearRefreshToken = data.refresh_token;
 
-					// Update IssueTracker with new LinearClient
+					// Update the raw LinearClient - the proxy will automatically use it
 					const newClient = new LinearClient({
 						accessToken: data.access_token,
 					});
-					const wrappedClient = this.wrapLinearClient(newClient, repoId);
-					const newIssueTracker = new LinearIssueTrackerService(wrappedClient);
-					this.issueTrackers.set(repoId, newIssueTracker);
+					this.rawLinearClients.set(repoId, newClient);
 				}
 			}
 
