@@ -1,0 +1,93 @@
+# Evolution Architecture Session 7b - Storage Structure Discussion
+
+**Context:** Continuation from session 6. Reviewing the architecture document and correcting the file storage structure.
+
+---
+
+## Where We Left Off
+
+From session 6, the document had been updated with:
+1. Core insight reframed as Human + AI + Determinism collaboration
+2. Scale = minimum 3 variations, not 200
+3. Static workflows are essential (TDD example)
+4. Grading is a process, not a prompt
+5. Tournaments, not merging for propositions
+
+Two potential additions from Gemini discussion:
+1. Explicit Mutable Layer - what Evolution CAN vs CANNOT modify
+2. Synthetic Probes - cheap smoke test before deploying prompt changes
+
+---
+
+## Storage Structure Discussion
+
+**User:** I disagree with the timestamped files approach. Look at the ~/.cyrus folder first.
+
+**Examination of existing structure:**
+
+```
+~/.cyrus/
+├── logs/ENG-29/
+│   ├── session-{uuid}-{timestamp}.jsonl  ← Timestamped logs
+│   └── session-{uuid}-{timestamp}.md
+├── state/
+│   └── edge-worker-state.json            ← Single file, overwritten
+├── ENG-12/attachments/                   ← Attachments at root
+├── repos/
+└── worktrees/
+```
+
+**Document had proposed (wrongly):**
+```
+├── grading/ENG-13/grade-{timestamp}.json
+├── evolution/ENG-13/hypothesis-{timestamp}.json
+```
+
+**User's correction:**
+
+> This puts 'session-' in front, then 'grade-', then 'hypothesis-' - why different prefixes? We need standardized naming. Everything is session-stamped. Grading happens as the process runs, so it's part of the session. Evolution is NOT timestamped. Don't invent new patterns - mirror what exists in ~/.cyrus.
+
+**Key insight:**
+- Grading happens DURING/AFTER a session run - it's tied to that session
+- Grade data belongs WITH that session, not in a separate folder with different naming
+- Evolution is different - it's not per-session, not timestamped per-run
+- Don't invent new patterns, mirror existing structure
+
+**Document updated to:**
+
+### 11.3 Follow Existing Structure
+
+Mirror the existing ~/.cyrus structure. Don't invent new naming patterns.
+
+**Current structure (keep this):**
+```
+~/.cyrus/
+├── logs/ENG-13/
+│   ├── session-{uuid}-{timestamp}.jsonl
+│   └── session-{uuid}-{timestamp}.md
+├── state/
+│   └── edge-worker-state.json
+├── worktrees/
+├── repos/                   ← Excluded from git
+└── config.json              ← Excluded from git
+```
+
+**Add for Evolution:**
+```
+├── workflows/               ← TypeScript workflow definitions
+│   ├── full-development.ts
+│   └── tdd.ts
+├── evolution/               ← Evolution state (not timestamped per-run)
+│   └── ENG-13/
+```
+
+**Grading is part of session data** - it happens during/after a session run and belongs with that session's logs, not in a separate folder with different naming.
+
+---
+
+## Summary of Changes
+
+1. **Section 11.3** - Changed to "Follow Existing Structure" - mirror what exists, don't invent patterns
+2. **Grading** - Part of session data, not separate folder
+3. **Evolution** - Not timestamped per-run
+4. **Section 12.2** - Removed invented file patterns, references existing session pattern only

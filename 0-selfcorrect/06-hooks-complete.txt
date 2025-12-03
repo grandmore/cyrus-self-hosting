@@ -1,0 +1,2946 @@
+  ⎿  Read plans/07c-implementation-spec.md (505 lines)
+  ⎿  Read research/06-hook-points-analysis.md (655 lines)
+
+⏺ Looking at the hook points analysis, the answer is surprisingly little
+  work:
+
+  Minimal Changes Required
+
+  | Phase              | Description
+   | Lines of Code | Already Exists?         |
+  |--------------------|----------------------------------------------------
+  -|---------------|-------------------------|
+  | Custom Prompts     | Load from ~/.cyrus/evolved-prompts/ before built-in
+   | ~10 lines     | No - needs adding       |
+  | Model Selection    | Per-subroutine preferredModel field
+   | ~15 lines     | Partial - config exists |
+  | Metrics Logging    | Use existing session logs
+   | 0 lines       | Yes                     |
+  | Workflow Execution | TypeScript workflow files
+   | ~50-75 lines  | No - new feature        |
+
+  The Key Hook Point
+
+  Hook 4: loadSubroutinePrompt() in EdgeWorker.ts (lines 4079-4118) is the
+  primary integration point. It's a simple path-based loader that can be
+  extended with 10 lines:
+
+  // Check ~/.cyrus/evolved-prompts/ first, fall back to built-in
+  const customPath = join(os.homedir(), '.cyrus', 'evolved-prompts',
+  subroutine.promptPath);
+  try {
+    return await readFile(customPath, 'utf-8');
+  } catch {
+    // Fall through to built-in prompt
+  }
+
+  What Already Works
+
+  - Event-based architecture for metrics (subroutineComplete events)
+  - PostToolUse hooks framework (just needs more matchers)
+  - Session logging to ~/.cyrus/logs/
+  - MCP configuration per repository
+
+  What's Missing for TypeScript Workflows
+
+  The current spec describes TypeScript workflow files with runSubroutine()
+  logic. That requires:
+  1. A workflow loader (~50 lines)
+  2. WorkflowContext interface (~25 lines)
+  3. Fallback to internal procedures if no workflow exists
+
+  ---
+  Question: Should I rewrite 07c-implementation-spec.md to be concise
+  (targeting ~100 lines vs current ~500), focusing on:
+  1. The 10-line prompt loading hook
+  2. The 15-line model selection change
+  3. The workflow.ts execution model
+
+  Or do you want to scope this differently?
+
+> I want you to think deeply. What we're trying to do is write a structure 
+that uses TypeScript by hooking into the system. We need to make sure we're
+capturing each one of the parts inside Cyrus so we can duplicate what
+already exists with minimal changes. The idea was, can we use what's already
+ there? Can we hook into it? ultrathink
+
+⏺ Let me think deeply about this. The core question is: what do we need to 
+  expose from Cyrus to allow external TypeScript workflows, while reusing 
+  everything that already exists?
+
+⏺ Explore(Explore Cyrus execution flow)
+  ⎿  Done (23 tool uses · 68.2k tokens · 1m 18s)                           
+
+⏺ Now I understand the architecture deeply. Let me write a concise, accurate
+   spec.
+
+  The key insight is: Cyrus uses an event-based pattern (fire-and-forget + 
+  "subroutineComplete" event), but TypeScript workflows need an awaitable 
+  pattern (async/await). The integration layer is a Promise wrapper around
+  the event.
+
+⏺ Read(plans/07c-implementation-spec.md)
+  ⎿  Read 505 lines
+
+⏺ Now I have the full picture. Let me write a concise, accurate spec:
+
+⏺ Write(plans/07c-implementation-spec.md)
+  ⎿  Updated plans/07c-implementation-spec.md with 218 additions and 396 
+     removals
+         1 -  # Evolution Implementation Specification
+         1 +  # Workflow Integration Specification
+         2    
+         3 -  **Purpose:** Define exactly what we are building. Based on 
+           - how Cyrus actually works.
+         3 +  **Purpose:** Hook TypeScript workflows into Cyrus with 
+           + minimal changes by reusing existing infrastructure.
+         4    
+         5    ---
+         6    
+         7 -  ## 1. How Cyrus Currently Executes Procedures
+         7 +  ## The Problem
+         8    
+         9 -  ### 1.1 The Flow
+         9 +  Cyrus procedures are static arrays. We want TypeScript 
+           + logic (conditionals, loops, retries) while reusing:
+        10 +  - Claude/Gemini execution (`resumeAgentSession`)
+        11 +  - Session continuity (`claudeSessionId`/`geminiSessionId`)
+        12 +  - Linear integration (activity posting, comments)
+        13 +  - MCP configuration (tools, Linear API)
+        14    
+        15 -  ```
+        16 -  1. ProcedureRouter.determineRoutine() → selects procedure
+        17 -  2. initializeProcedureMetadata() → sets 
+           - currentSubroutineIndex = 0
+        18 -  3. Initial prompt assembled with first subroutine prompt
+        19 -  4. Claude session runs
+        20 -  5. Session completes → 
+           - AgentSessionManager.handleProcedureCompletion()
+        21 -  6. procedureRouter.advanceToNextSubroutine() → index++
+        22 -  7. Emit 'subroutineComplete' event
+        23 -  8. EdgeWorker.handleSubroutineTransition()
+        24 -  9. loadSubroutinePrompt() → reads prompts/{promptPath}
+        25 -  10. resumeAgentSession() with new prompt
+        26 -  11. Repeat 4-10 until no more subroutines
+        27 -  ```
+        15 +  ---
+        16    
+        17 -  ### 1.2 Key Functions
+        17 +  ## The Architecture Gap
+        18    
+        19 -  **loadSubroutinePrompt()** (EdgeWorker.ts:4079):
+        20 -  ```typescript
+        21 -  private async loadSubroutinePrompt(
+        22 -    subroutine: SubroutineDefinition,
+        23 -    workspaceSlug?: string,
+        24 -  ): Promise<string | null> {
+        25 -    if (subroutine.promptPath === "primary") {
+        26 -      return null;
+        27 -    }
+        28 -  
+        29 -    const subroutinePromptPath = join(__dirname, "prompts", 
+           - subroutine.promptPath);
+        30 -    let prompt = await readFile(subroutinePromptPath, 
+           - "utf-8");
+        31 -  
+        32 -    // Template substitution for workspace slug
+        33 -    if (workspaceSlug) {
+        34 -      prompt = prompt.replace(
+        35 -        /https:\/\/linear\.app\/linear\/profiles\//g,
+        36 -        `https://linear.app/${workspaceSlug}/profiles/`,
+        37 -      );
+        38 -    }
+        39 -  
+        40 -    return prompt;
+        41 -  }
+        19 +  **Cyrus uses events:**
+        20    ```
+        21 -  
+        22 -  **handleSubroutineTransition()** (EdgeWorker.ts:528):
+        23 -  ```typescript
+        24 -  private async handleSubroutineTransition(...) {
+        25 -    const nextSubroutine = 
+           - this.procedureRouter.getCurrentSubroutine(session);
+        26 -  
+        27 -    const subroutinePrompt = await this.loadSubroutinePrompt(
+        28 -      nextSubroutine,
+        29 -      this.config.linearWorkspaceSlug,
+        30 -    );
+        31 -  
+        32 -    await this.resumeAgentSession(
+        33 -      session,
+        34 -      repo,
+        35 -      linearAgentActivitySessionId,
+        36 -      agentSessionManager,
+        37 -      subroutinePrompt,
+        38 -      "", // No attachment manifest
+        39 -      false, // Not a new session
+        40 -      [], // No additional allowed directories
+        41 -      nextSubroutine?.singleTurn ? 1 : undefined,
+        42 -    );
+        43 -  }
+        21 +  resumeAgentSession() → returns immediately
+        22 +  ... Claude runs ...
+        23 +  AgentSessionManager emits "subroutineComplete" → 
+           + EdgeWorker.handleSubroutineTransition()
+        24    ```
+        25    
+        26 -  ### 1.3 The Data Structure
+        27 -  
+        26 +  **Workflows need promises:**
+        27    ```typescript
+        28 -  // registry.ts
+        29 -  export const PROCEDURES: Record<string, 
+           - ProcedureDefinition> = {
+        30 -    "full-development": {
+        31 -      name: "full-development",
+        32 -      description: "For code changes requiring full 
+           - verification and PR creation",
+        33 -      subroutines: [
+        34 -        SUBROUTINES.codingActivity,
+        35 -        SUBROUTINES.verifications,
+        36 -        SUBROUTINES.gitGh,
+        37 -        SUBROUTINES.conciseSummary,
+        38 -      ],
+        39 -    },
+        40 -  };
+        41 -  
+        42 -  export const SUBROUTINES = {
+        43 -    codingActivity: {
+        44 -      name: "coding-activity",
+        45 -      promptPath: "subroutines/coding-activity.md",
+        46 -      description: "Implementation phase for code changes (no
+           -  git/gh operations)",
+        47 -    },
+        48 -    verifications: {
+        49 -      name: "verifications",
+        50 -      promptPath: "subroutines/verifications.md",
+        51 -      description: "Run tests, linting, and type checking",
+        52 -    },
+        53 -    gitGh: {
+        54 -      name: "git-gh",
+        55 -      promptPath: "subroutines/git-gh.md",
+        56 -      description: "Commit changes and create/update PR",
+        57 -    },
+        58 -    conciseSummary: {
+        59 -      name: "concise-summary",
+        60 -      promptPath: "subroutines/concise-summary.md",
+        61 -      singleTurn: true,
+        62 -      description: "Brief summary for simple requests",
+        63 -      suppressThoughtPosting: true,
+        64 -      disallowedTools: ["mcp__linear__create_comment"],
+        65 -    },
+        66 -  };
+        28 +  await ctx.runSubroutine({ promptPath: "coding.md" });
+        29 +  await ctx.runSubroutine({ promptPath: "verify.md" });  // 
+           + Must wait for previous
+        30    ```
+        31    
+        32 -  ---
+        32 +  **Solution:** Wrap the event in a Promise.
+        33    
+        34 -  ## 2. What We Are Building
+        35 -  
+        36 -  A TypeScript workflow file that:
+        37 -  - Defines the sequence of prompts
+        38 -  - Can have conditionals, loops, retries
+        39 -  - Loads and executes prompts in order
+        40 -  - Handles the resume/transition logic
+        41 -  
+        42 -  NOT a JSON data structure. Actual executable TypeScript.
+        43 -  
+        34    ---
+        35    
+        36 -  ## 3. Folder Structure
+        36 +  ## Folder Structure
+        37    
+        38    ```
+        39 -  ~/.cyrus/
+        40 -  ├── workflows/
+        41 -  │   └── full-development/
+        42 -  │       ├── workflow.ts              ← TypeScript execution
+           -  logic
+        43 -  │       └── prompts/
+        44 -  │           └── subroutines/
+        45 -  │               ├── coding-activity.md
+        46 -  │               ├── verifications.md
+        47 -  │               ├── git-gh.md
+        48 -  │               └── concise-summary.md
+        39 +  ~/.cyrus/workflows/
+        40 +  └── full-development/
+        41 +      ├── workflow.ts              ← TypeScript logic
+        42 +      └── prompts/
+        43 +          └── subroutines/
+        44 +              ├── coding-activity.md
+        45 +              ├── verifications.md
+        46 +              ├── git-gh.md
+        47 +              └── concise-summary.md
+        48    ```
+        49    
+        50    ---
+        51    
+        52 -  ## 4. workflow.ts
+        52 +  ## workflow.ts Example
+        53    
+        54 -  The TypeScript file that replicates `full-development` 
+           - procedure:
+        55 -  
+        54    ```typescript
+        55 -  import { WorkflowContext, runSubroutine } from 
+           - '@cyrus/evolution';
+        55 +  import type { WorkflowContext, SubroutineResult } from 
+           + '@anthropic-ai/cyrus';
+        56    
+        57 -  /**
+        58 -   * Full Development Workflow
+        59 -   *
+        60 -   * Replicates the internal full-development procedure 
+           - exactly.
+        61 -   * Sequence: coding-activity → verifications → git-gh → 
+           - concise-summary
+        62 -   */
+        57    export async function run(ctx: WorkflowContext): 
+             Promise<void> {
+        58 -    // 1. Implementation phase
+        59 -    await runSubroutine(ctx, {
+        60 -      name: "coding-activity",
+        61 -      promptPath: "subroutines/coding-activity.md",
+        62 -      description: "Implementation phase for code changes (no
+           -  git/gh operations)",
+        58 +    // 1. Implementation
+        59 +    await ctx.runSubroutine({
+        60 +      name: 'coding-activity',
+        61 +      promptPath: 'subroutines/coding-activity.md',
+        62      });
+        63    
+        64 -    // 2. Verification phase
+        65 -    await runSubroutine(ctx, {
+        66 -      name: "verifications",
+        67 -      promptPath: "subroutines/verifications.md",
+        68 -      description: "Run tests, linting, and type checking",
+        69 -    });
+        64 +    // 2. Verification with retry
+        65 +    let result: SubroutineResult;
+        66 +    let attempts = 0;
+        67 +    do {
+        68 +      result = await ctx.runSubroutine({
+        69 +        name: 'verifications',
+        70 +        promptPath: 'subroutines/verifications.md',
+        71 +      });
+        72 +      attempts++;
+        73 +    } while (!result.success && attempts < 3);
+        74    
+        75 -    // 3. Git/GitHub phase
+        76 -    await runSubroutine(ctx, {
+        77 -      name: "git-gh",
+        78 -      promptPath: "subroutines/git-gh.md",
+        79 -      description: "Commit changes and create/update PR",
+        75 +    // 3. Git/PR
+        76 +    await ctx.runSubroutine({
+        77 +      name: 'git-gh',
+        78 +      promptPath: 'subroutines/git-gh.md',
+        79      });
+        80    
+        81 -    // 4. Summary phase (single turn)
+        82 -    await runSubroutine(ctx, {
+        83 -      name: "concise-summary",
+        84 -      promptPath: "subroutines/concise-summary.md",
+        85 -      description: "Brief summary for simple requests",
+        81 +    // 4. Summary (single turn, cheap model)
+        82 +    await ctx.runSubroutine({
+        83 +      name: 'concise-summary',
+        84 +      promptPath: 'subroutines/concise-summary.md',
+        85        singleTurn: true,
+        86 -      suppressThoughtPosting: true,
+        87 -      disallowedTools: ["mcp__linear__create_comment"],
+        86 +      model: 'haiku',
+        87      });
+        88    }
+        89    ```
+        90    
+        91    ---
+        92    
+        93 -  ## 5. What runSubroutine() Does
+        93 +  ## WorkflowContext Interface
+        94    
+        95 -  Mirrors internal behavior:
+        96 -  
+        95    ```typescript
+        96 -  async function runSubroutine(
+        97 -    ctx: WorkflowContext,
+        98 -    subroutine: SubroutineDefinition,
+        99 -  ): Promise<void> {
+       100 -    // 1. Load prompt from workflow's prompts folder
+       101 -    const promptPath = path.join(ctx.workflowDir, 'prompts', 
+           - subroutine.promptPath);
+       102 -    const prompt = await fs.readFile(promptPath, 'utf-8');
+       103 -  
+       104 -    // 2. Apply template substitutions
+       105 -    const processedPrompt = applyTemplates(prompt, ctx);
+       106 -  
+       107 -    // 3. Resume session with prompt
+       108 -    await ctx.resumeSession({
+       109 -      prompt: processedPrompt,
+       110 -      maxTurns: subroutine.singleTurn ? 1 : undefined,
+       111 -      disallowedTools: subroutine.disallowedTools,
+       112 -      suppressThoughtPosting: 
+           - subroutine.suppressThoughtPosting,
+       113 -    });
+       114 -  
+       115 -    // 4. Wait for completion
+       116 -    await ctx.waitForCompletion();
+       117 -  }
+       118 -  ```
+       119 -  
+       120 -  ---
+       121 -  
+       122 -  ## 6. What WorkflowContext Provides
+       123 -  
+       124 -  ```typescript
+        96    interface WorkflowContext {
+        97      // Paths
+        98      workflowDir: string;           // 
+             ~/.cyrus/workflows/full-development/
+        99 -    workspaceSlug: string;         // Linear workspace
+        99 +    workspaceSlug: string;         // Linear workspace
+           +   for template substitution
+       100    
+       101 -    // Session control
+       102 -    session: CyrusAgentSession;
+       103 -    resumeSession(opts: ResumeOptions): Promise<void>;
+       104 -    waitForCompletion(): Promise<void>;
+       105 -  
+       106 -    // Issue context
+       101 +    // Context from Cyrus
+       102 +    session: CyrusAgentSession;    // Includes 
+           + claudeSessionId, geminiSessionId
+       103      issue: LinearIssue;
+       104      repository: RepositoryConfig;
+       105    
+       106 -    // State
+       106 +    // Execution (the key method)
+       107 +    runSubroutine(opts: SubroutineOptions): 
+           + Promise<SubroutineResult>;
+       108 +  
+       109 +    // Shared state across subroutines
+       110      metadata: Record<string, unknown>;
+       111    }
+       112 +  
+       113 +  interface SubroutineOptions {
+       114 +    name: string;
+       115 +    promptPath: string;            // Relative to 
+           + workflowDir/prompts/
+       116 +    description?: string;
+       117 +    model?: 'opus' | 'sonnet' | 'haiku';
+       118 +    singleTurn?: boolean;
+       119 +    maxTurns?: number;
+       120 +    disallowedTools?: string[];
+       121 +    suppressThoughtPosting?: boolean;
+       122 +  }
+       123 +  
+       124 +  interface SubroutineResult {
+       125 +    success: boolean;
+       126 +    result: string;                // Final text from Claude
+       127 +    tokenUsage: { input: number; output: number };
+       128 +    costUsd: number;
+       129 +    durationMs: number;
+       130 +  }
+       131    ```
+       132    
+       133    ---
+       134    
+       135 -  ## 7. Hooks Required in Cyrus
+       135 +  ## Implementation in Cyrus
+       136    
+       137 -  ### 7.1 Workflow Loader
+       137 +  ### 1. Entry Point (~30 lines in EdgeWorker.ts)
+       138    
+       139 -  Replace procedure-based execution with workflow-based:
+       139 +  Before using internal procedure, check for external 
+           + workflow:
+       140    
+       141    ```typescript
+       142 -  // In EdgeWorker or new WorkflowExecutor
+       143 -  
+       144 -  async function executeWorkflow(
+       145 -    workflowName: string,
+       142 +  private async executeWorkflowOrProcedure(
+       143 +    procedureName: string,
+       144      session: CyrusAgentSession,
+       145 -    ...
+       145 +    agentSessionManager: AgentSessionManager,
+       146 +    repository: RepositoryConfig,
+       147    ): Promise<void> {
+       148      const workflowPath = path.join(
+       149 -      os.homedir(), '.cyrus', 'workflows', workflowName
+           -  , 'workflow.ts'
+       149 +      os.homedir(), '.cyrus', 'workflows', procedureName
+           +  , 'workflow.js'
+       150      );
+       151    
+       152 -    // Dynamic import
+       153 -    const { run } = await import(workflowPath);
+       154 -  
+       155 -    // Create context
+       156 -    const ctx = createWorkflowContext(session, workflowName, 
+           - ...);
+       157 -  
+       158 -    // Execute
+       159 -    await run(ctx);
+       152 +    if (await exists(workflowPath)) {
+       153 +      const { run } = await import(workflowPath);
+       154 +      const ctx = this.createWorkflowContext(session, 
+           + procedureName, ...);
+       155 +      await run(ctx);
+       156 +    } else {
+       157 +      // Fall back to internal procedure
+       158 +      await this.executeProcedure(procedureName, session, 
+           + ...);
+       159 +    }
+       160    }
+       161    ```
+       162    
+       163 -  ### 7.2 Fallback to Internal
+       163 +  ### 2. WorkflowContext Factory (~40 lines)
+       164    
+       165 -  If workflow doesn't exist in ~/.cyrus/workflows/, use 
+           - internal procedure:
+       166 -  
+       165    ```typescript
+       166 -  async function getWorkflowOrProcedure(name: string): 
+           - Promise<...> {
+       167 -    const customPath = path.join(os.homedir(), '.cyrus', 
+           - 'workflows', name);
+       166 +  private createWorkflowContext(
+       167 +    session: CyrusAgentSession,
+       168 +    workflowName: string,
+       169 +    agentSessionManager: AgentSessionManager,
+       170 +    repository: RepositoryConfig,
+       171 +  ): WorkflowContext {
+       172 +    const workflowDir = path.join(os.homedir(), '.cyrus', 
+           + 'workflows', workflowName);
+       173    
+       174 -    if (await exists(path.join(customPath, 'workflow.ts'))) {
+       175 -      return { type: 'workflow', path: customPath };
+       176 -    }
+       174 +    return {
+       175 +      workflowDir,
+       176 +      workspaceSlug: this.config.linearWorkspaceSlug,
+       177 +      session,
+       178 +      issue: this.getCurrentIssue(session),
+       179 +      repository,
+       180 +      metadata: session.metadata?.workflow || {},
+       181    
+       182 -    // Fall back to internal procedure
+       183 -    const procedure = PROCEDURES[name];
+       184 -    if (procedure) {
+       185 -      return { type: 'procedure', definition: procedure };
+       186 -    }
+       187 -  
+       188 -    throw new Error(`Workflow or procedure "${name}" not 
+           - found`);
+       182 +      runSubroutine: (opts) => 
+           + this.executeSubroutineForWorkflow(
+       183 +        session, workflowDir, opts, agentSessionManager, 
+           + repository
+       184 +      ),
+       185 +    };
+       186    }
+       187    ```
+       188    
+       189 -  ---
+       189 +  ### 3. Subroutine Execution with Promise Wrapper (~50 
+           + lines)
+       190    
+       191 -  ## 8. Prompts (Exact Copies)
+       191 +  The key integration: wrap the event-based completion in a 
+           + Promise.
+       192    
+       193 -  ### 8.1 subroutines/coding-activity.md
+       193 +  ```typescript
+       194 +  private async executeSubroutineForWorkflow(
+       195 +    session: CyrusAgentSession,
+       196 +    workflowDir: string,
+       197 +    opts: SubroutineOptions,
+       198 +    agentSessionManager: AgentSessionManager,
+       199 +    repository: RepositoryConfig,
+       200 +  ): Promise<SubroutineResult> {
+       201 +    // 1. Load prompt
+       202 +    const promptPath = path.join(workflowDir, 'prompts', 
+           + opts.promptPath);
+       203 +    let prompt = await fs.readFile(promptPath, 'utf-8');
+       204 +    prompt = this.applyTemplateSubstitutions(prompt);
+       205    
+       206 -  ```markdown
+       207 -  # Implementation Phase
+       206 +    // 2. Create completion promise (wrap the event)
+       207 +    const completionPromise = new 
+           + Promise<SDKResultMessage>((resolve) => {
+       208 +      const handler = ({ session: s, result }: 
+           + SubroutineCompleteEvent) => {
+       209 +        if (s.id === session.id) {
+       210 +          agentSessionManager.off('subroutineComplete', 
+           + handler);
+       211 +          resolve(result);
+       212 +        }
+       213 +      };
+       214 +      agentSessionManager.on('subroutineComplete', handler);
+       215 +    });
+       216    
+       217 -  Implement the requested changes:
+       218 -  - Write production-ready code
+       219 -  - Run tests to verify it works
+       220 -  - Follow existing patterns
+       217 +    // 3. Start execution (fire-and-forget, uses existing 
+           + infrastructure)
+       218 +    await this.resumeAgentSession(
+       219 +      session,
+       220 +      repository,
+       221 +      session.linearAgentActivitySessionId,
+       222 +      agentSessionManager,
+       223 +      prompt,
+       224 +      '',                              // No attachment 
+           + manifest
+       225 +      false,                           // Not new session
+       226 +      [],                              // No additional 
+           + directories
+       227 +      opts.singleTurn ? 1 : opts.maxTurns,
+       228 +    );
+       229    
+       230 -  **Do NOT**: commit, push, or create PRs (next phase handles
+           -  that)
+       230 +    // 4. Wait for completion event
+       231 +    const result = await completionPromise;
+       232    
+       233 -  Complete with: `Implementation complete - [what was done].`
+       233 +    return {
+       234 +      success: result.subtype === 'success',
+       235 +      result: result.result,
+       236 +      tokenUsage: result.usage,
+       237 +      costUsd: result.total_cost_usd,
+       238 +      durationMs: result.duration_ms,
+       239 +    };
+       240 +  }
+       241    ```
+       242    
+       243 -  ### 8.2 subroutines/verifications.md
+       243 +  ---
+       244    
+       245 -  ```markdown
+       246 -  # Verifications - Testing and Quality Checks
+       245 +  ## What We Reuse (No Changes Needed)
+       246    
+       247 -  You have completed the primary work on this issue. Now 
+           - perform thorough verification to ensure everything works 
+           - correctly and meets quality standards.
+       247 +  | Component | What It Does | Why It Works |
+       248 +  |-----------|--------------|--------------|
+       249 +  | `resumeAgentSession()` | Starts Claude with prompt | 
+           + Already handles model, MCP, hooks |
+       250 +  | `AgentSessionManager` | Emits completion events | Already
+           +  provides "subroutineComplete" |
+       251 +  | `buildAgentRunnerConfig()` | Configures runner | Already 
+           + supports per-session model |
+       252 +  | Session persistence | Saves state between subroutines | 
+           + Already handles claudeSessionId flow |
+       253 +  | Linear integration | Posts activity/comments | Already 
+           + wired up via onMessage |
+       254    
+       255 -  ## Your Tasks
+       255 +  ---
+       256    
+       257 -  ### 1. Code Quality Review
+       258 -  - Review all code changes for quality, consistency, and 
+           - best practices
+       259 -  - Ensure proper error handling and edge cases are covered
+       260 -  - Verify code follows project conventions and patterns
+       261 -  - Check for any code smells or areas that need refactoring
+       257 +  ## What We Add
+       258    
+       259 -  ### 2. Testing & Verification
+       260 -  - Run all relevant tests and ensure they pass
+       261 -  - Fix any failing tests
+       262 -  - Add any missing test coverage for new functionality
+       263 -  - Verify the implementation meets all requirements from the
+           -  issue description
+       264 -  - Check that existing functionality wasn't broken by the 
+           - changes
+       259 +  | Location | Lines | Description |
+       260 +  |----------|-------|-------------|
+       261 +  | `EdgeWorker.ts` | ~30 | `executeWorkflowOrProcedure()` 
+           + entry point |
+       262 +  | `EdgeWorker.ts` | ~40 | `createWorkflowContext()` factory
+           +  |
+       263 +  | `EdgeWorker.ts` | ~50 | `executeSubroutineForWorkflow()` 
+           + with Promise wrapper |
+       264 +  | New: `types/workflow.ts` | ~30 | TypeScript interfaces 
+           + for workflow.ts |
+       265 +  | **Total** | **~150** | |
+       266    
+       267 -  ### 3. Linting & Type Checking
+       268 -  - Run linting tools and fix any issues
+       269 -  - Run TypeScript type checking (if applicable) and fix any 
+           - errors
+       270 -  - Ensure code meets all quality standards
+       271 -  - Fix any auto-fixable issues
+       267 +  ---
+       268    
+       269 -  ### 4. Documentation Review
+       270 -  - Update relevant documentation (README, API docs, etc.)
+       271 -  - Remove any debug code, console.logs, or commented-out 
+           - sections
+       272 -  - Ensure code comments are clear and up-to-date
+       273 -  - Update CHANGELOG.md if applicable
+       269 +  ## Per-Subroutine Model Selection
+       270    
+       271 -  ## Important Notes
+       271 +  Already supported in `buildAgentRunnerConfig()`. To enable 
+           + from workflow:
+       272    
+       273 -  - **Do NOT commit or push changes** - that happens in the 
+           - next subroutine
+       274 -  - **Do NOT create or update PRs** - that also happens in 
+           - the next subroutine
+       275 -  - **Focus on verification only** - this is the quality gate
+       276 -  - Be thorough but efficient
+       277 -  
+       278 -  ## Expected Output
+       279 -  
+       280 -  **IMPORTANT: Do NOT post Linear comments.** Your output is 
+           - for internal workflow only.
+       281 -  
+       282 -  Provide a brief completion message (1 sentence max):
+       283 -  
+       273 +  ```typescript
+       274 +  // In SubroutineOptions handling:
+       275 +  const model = opts.model || repository.model || 
+           + this.config.defaultModel;
+       276    ```
+       277 -  All verifications passed - [X] tests passing, linting 
+           - clean, types valid.
+       278 -  ```
+       277    
+       278 -  Example: "All verifications passed - 47 tests passing, 
+           - linting clean, types valid."
+       278 +  This allows:
+       279 +  ```typescript
+       280 +  await ctx.runSubroutine({ promptPath: 'planning.md', model:
+           +  'opus' });
+       281 +  await ctx.runSubroutine({ promptPath: 'coding.md', model: 
+           + 'sonnet' });
+       282 +  await ctx.runSubroutine({ promptPath: 'summary.md', model: 
+           + 'haiku' });
+       283    ```
+       284    
+       285 -  ### 8.3 subroutines/git-gh.md
+       285 +  ---
+       286    
+       287 -  ```markdown
+       288 -  # Git & GitHub - Version Control and PR Management
+       287 +  ## TypeScript Execution
+       288    
+       289 -  All verification checks have passed. Now commit your 
+           - changes and create or update the GitHub Pull Request.
+       289 +  Workflows are TypeScript but must be runnable. Options:
+       290    
+       291 -  ## Your Tasks
+       291 +  1. **Pre-compiled:** User runs `tsc` to create 
+           + `workflow.js`
+       292 +  2. **On-the-fly:** Use `esbuild` to compile at import time 
+           + (~5 lines)
+       293 +  3. **Native:** Node 22+ with `--experimental-strip-types`
+       294    
+       295 -  ### 1. Version Control
+       296 -  - **COMMIT all changes** with clear, descriptive commit 
+           - messages following the project's commit message format
+       297 -  - **PUSH changes** to remote repository
+       298 -  - Ensure all work is synchronized with the remote 
+           - repository
+       299 -  - Verify commit history is clean and meaningful
+       300 -  - Follow the git workflow instructions from the project's 
+           - CLAUDE.md if present
+       295 +  Recommend option 2 for best DX:
+       296 +  ```typescript
+       297 +  import { build } from 'esbuild';
+       298    
+       299 -  ### 2. Pull Request Management
+       300 -  - **MUST create or update the GitHub Pull Request** using 
+           - the GitHub CLI:
+       301 -    ```bash
+       302 -    gh pr create
+       303 -    ```
+       304 -    Or if a PR already exists:
+       305 -    ```bash
+       306 -    gh pr edit
+       307 -    ```
+       308 -  - **IMPORTANT**: Make sure the PR is created for the 
+           - correct base branch associated with the current working 
+           - branch. Do NOT assume the base branch is the default one.
+       309 -  - Ensure the PR has a clear, descriptive title
+       310 -  - Write a comprehensive PR description including:
+       311 -    - Summary of changes
+       312 -    - Implementation approach
+       313 -    - Testing performed
+       314 -    - Any breaking changes or migration notes
+       315 -  - Link the PR to the Linear issue if not already linked
+       316 -  - Verify the PR is targeting the correct base branch
+       317 -  
+       318 -  ### 3. Final Checks
+       319 -  - Confirm the PR URL is valid and accessible
+       320 -  - Verify all commits are included in the PR
+       321 -  - Check that CI/CD pipelines start running (if applicable)
+       322 -  
+       323 -  ## Important Notes
+       324 -  
+       325 -  - **All verifications have already passed** - you're just 
+           - committing the verified work
+       326 -  - **Follow the project's commit message conventions** - 
+           - check CLAUDE.md or recent commits for format
+       327 -  - **Be thorough with the PR description** - it should be 
+           - self-contained and informative
+       328 -  - Take as many turns as needed to complete these tasks
+       329 -  
+       330 -  ## Expected Output
+       331 -  
+       332 -  **IMPORTANT: Do NOT post Linear comments.** Your output is 
+           - for internal workflow only.
+       333 -  
+       334 -  Provide a brief completion message (1 sentence max):
+       335 -  
+       299 +  async function importWorkflow(tsPath: string) {
+       300 +    const result = await build({
+       301 +      entryPoints: [tsPath],
+       302 +      bundle: false,
+       303 +      write: false,
+       304 +      format: 'esm',
+       305 +    });
+       306 +    const code = result.outputFiles[0].text;
+       307 +    const blob = new Blob([code], { type: 'text/javascript' 
+           + });
+       308 +    return import(URL.createObjectURL(blob));
+       309 +  }
+       310    ```
+       311 -  Changes committed and PR [created/updated] at [PR URL].
+       312 -  ```
+       311    
+       312 -  Example: "Changes committed and PR created at 
+           - https://github.com/org/repo/pull/123."
+       313 -  ```
+       314 -  
+       315 -  ### 8.4 subroutines/concise-summary.md
+       316 -  
+       317 -  ```markdown
+       318 -  # Summary - Brief Response for Linear
+       319 -  
+       320 -  Generate a concise summary of the work completed for 
+           - posting to Linear.
+       321 -  
+       322 -  ## Your Task
+       323 -  
+       324 -  Create a clear, brief summary that covers:
+       325 -  
+       326 -  ### 1. Work Completed
+       327 -  - What was accomplished (1-2 sentences)
+       328 -  - Key outcome or result
+       329 -  
+       330 -  ### 2. Key Details (if applicable)
+       331 -  - Files modified or created (brief list)
+       332 -  - Important changes made
+       333 -  - PR link if created
+       334 -  
+       335 -  ### 3. Status
+       336 -  - Completion status
+       337 -  - Any follow-up needed
+       338 -  
+       339 -  ## Format Requirements
+       340 -  
+       341 -  - **Be concise** - aim for 3-5 paragraphs maximum
+       342 -  - Use clear, professional language suitable for Linear
+       343 -  - Use markdown formatting for readability
+       344 -  - Focus on what matters to stakeholders
+       345 -  - **To mention someone**: Use 
+           - `https://linear.app/linear/profiles/username` syntax where 
+           - `username` is the Linear username (e.g., 
+           - `https://linear.app/linear/profiles/alice` to mention 
+           - @alice)
+       346 -  
+       347 -  ## Constraints
+       348 -  
+       349 -  - **You have exactly 1 turn** - generate the summary in a 
+           - single response
+       350 -  - This is the final output that will be posted to Linear
+       351 -  - Make it informative but brief
+       352 -  
+       353 -  ## Collapsible Sections
+       354 -  
+       355 -  **IMPORTANT**: When creating your summary, make the 
+           - following sections collapsible (collapsed by default):
+       356 -  
+       357 -  - **"Changes Made"** section - Wrap with `+++Changes 
+           - Made\n...\n+++`
+       358 -  - **"Files Modified"** section - Wrap with `+++Files 
+           - Modified\n...\n+++`
+       359 -  
+       360 -  This keeps the summary concise while preserving detailed 
+           - information for those who want to expand and read it.
+       361 -  ```
+       362 -  
+       312    ---
+       313    
+       314 -  ## 9. Files to Modify in Cyrus
+       314 +  ## Prompts
+       315    
+       316 -  | File | Change |
+       317 -  |------|--------|
+       318 -  | New: `packages/evolution/` | New package for workflow 
+           - execution |
+       319 -  | `EdgeWorker.ts` | Hook to check for external workflow 
+           - before internal procedure |
+       320 -  | `AgentSessionManager.ts` | Support workflow-based 
+           - execution alongside procedure-based |
+       316 +  Prompts live in `~/.cyrus/workflows/{name}/prompts/`. See 
+           + existing Cyrus prompts in 
+           + `packages/edge-worker/src/prompts/subroutines/` as 
+           + templates.
+       317    
+       318    ---
+       319    
+       320 -  ## 10. What We Learn By Building
+       320 +  ## Next Steps
+       321    
+       322 -  - How to dynamically import TypeScript workflows
+       323 -  - How to bridge workflow execution with existing session 
+           - management
+       324 -  - Whether the abstraction (`runSubroutine`, 
+           - `WorkflowContext`) is right
+       325 -  - Edge cases in prompt loading and template substitution
+       322 +  1. Implement `executeWorkflowOrProcedure()` entry point
+       323 +  2. Add Promise wrapper for completion events
+       324 +  3. Create types package for workflow.ts
+       325 +  4. Test with one workflow (full-development)
+       326 +  5. Document for users
+
+⏺ Done. The new spec is ~200 lines instead of ~500, and more importantly it
+  answers your core question:
+
+  How Much Work to Hook In?
+
+  ~150 lines of code changes in EdgeWorker.ts:
+
+  | Change                         | Lines | Purpose
+                                    |
+  |--------------------------------|-------|--------------------------------
+  ----------------------------------|
+  | executeWorkflowOrProcedure()   | ~30   | Entry point: check
+  ~/.cyrus/workflows/ before internal procedure |
+  | createWorkflowContext()        | ~40   | Factory: wrap session + provide
+   runSubroutine method             |
+  | executeSubroutineForWorkflow() | ~50   | The key integration: Promise
+  wrapper around event                |
+  | Types                          | ~30   | Interfaces for workflow.ts to
+  import                             |
+
+  The Key Insight
+
+  Cyrus uses events. Workflows need promises. The integration is a simple
+  wrapper:
+
+  // Create promise that resolves when event fires
+  const completionPromise = new Promise((resolve) => {
+    agentSessionManager.once('subroutineComplete', resolve);
+  });
+
+  // Fire-and-forget (existing Cyrus method)
+  await this.resumeAgentSession(...);
+
+  // Wait for event
+  const result = await completionPromise;
+
+  What We Reuse (No Changes)
+
+  - resumeAgentSession() - All Claude/Gemini execution
+  - buildAgentRunnerConfig() - Model selection, MCP, hooks
+  - AgentSessionManager - Session state, completion events
+  - Linear integration - Activity posting, comments
+  - Session persistence - claudeSessionId continuity
+
+  The existing Cyrus infrastructure does 95% of the work. We're just adding
+  a thin orchestration layer that lets TypeScript drive the sequence instead
+   of a static array.
+
+> Okay, I'm not saying that you're... of course Cyrus is doing the work, 
+we're using Cyrus, we're trying to extend it, of course it does all the
+work, that's the whole point. The thing we're trying to say is we need to
+hook new prompts and new workflows into the existing workflows. So to do
+that we need to truly understand how the current workflow system works, not
+how it calls things, we know they're all fine. Do you understand? Because at
+ the moment my understanding is it allows you to change a prompt, but that's
+ a file, an MD file. We don't want to do that, we want to have a hook so we
+can change the prompt and the reason is because we might be doing A/B
+testing, in which case switching your prompts each time it gets called, we
+might be running three work trees simultaneously, in which case we want to
+replace it based on what work trees are in. Do you get the point? We're
+adding logic where they're asking for a file. So what I want you to do is
+thoroughly understand deeply look into it and then when you understand how
+it currently works in the documentation folder, I want you to write a
+document of your understanding. But first, understand it so I can talk to
+you when we're finished, we're going to write a document. Do you agree?
+ultrathink.
+
+⏺ Yes, I understand now. You're not asking about the execution
+  infrastructure - you're asking about the prompt resolution system.
+
+  The current system does: promptPath → file on disk
+
+  You want: promptPath + context → logic → prompt content
+
+  Where the logic could be:
+  - A/B testing (pick variant based on experiment)
+  - Worktree-specific (different prompt per parallel execution)
+  - Dynamic generation (build prompt based on context)
+
+  Let me deeply explore how prompt loading currently works, end-to-end.
+
+⏺ Explore(Deep explore prompt loading system)
+  ⎿  Done (33 tool uses · 64.1k tokens · 1m 49s)                           
+
+⏺ Now I have a complete picture. Let me write the understanding document.
+
+⏺ Write(research/08-prompt-loading-system.md)
+  ⎿  Wrote 378 lines to research/08-prompt-loading-system.md               
+     # Prompt Loading System: How Cyrus Resolves Prompts
+     **Purpose:** Document exactly how Cyrus loads prompts today, what
+     context exists but isn't used, and where a hook would go.
+     ---
+     ## Current State: Simple File Lookup
+     The prompt loading is a straightforward file read:
+     … +368 lines (ctrl+o to expand)
+
+⏺ I've written the document. Here's my understanding:
+
+  The Core Issue
+
+  loadSubroutinePrompt() is a simple file reader:
+
+  promptPath → file on disk → string
+
+  But context exists at the call sites - it's just not passed through:
+  - Session (worktree path, issue ID)
+  - Procedure state (which subroutine, history)
+  - Repository config
+  - Issue labels
+
+  The Hook Point
+
+  The hook goes in loadSubroutinePrompt(). Instead of:
+
+  loadSubroutinePrompt(subroutine, workspaceSlug)
+
+  We need:
+
+  loadSubroutinePrompt(subroutine, workspaceSlug, context)
+
+  Where context includes everything needed for dynamic decisions:
+  - Which worktree is this?
+  - Which issue?
+  - What's the procedure state?
+  - What labels are on the issue?
+
+  Then a user-provided ~/.cyrus/prompt-resolver.ts can receive this context
+  and return:
+  - A custom prompt (from any source)
+  - Or null to fall back to the file
+
+  Changes Required
+
+  ~60 lines total:
+  1. Add context parameter to loadSubroutinePrompt()
+  2. Update call sites to pass context
+  3. Load and call user's prompt-resolver hook
+
+  ---
+  Does this match your understanding? The key insight is: the context 
+  already exists, it's just not flowing through to prompt resolution.
+
+> What you're displaying is not enough detail. I'm asking you to look 
+through the entire flow and say what is the current sequence? The current
+sequence starts with an orchestrator, then it selects 'developer', then it
+writes code, then it tests. That's like 10 prompts. You're just talking
+about one thing. I don't want one thing. I want to understand what the
+current flow is. The exact step by step by step. Because we're trying to
+model all of it, aren't we? Because when we build a workflow, a workflow is
+not one file connected to all prompts. It is, if there's five hooks, there's
+ five files. If there's 60 hooks, there's 60 files. You get the point I'm
+saying? Stop being over simplistic. You're wrong understanding. Please
+thunk. ultrathink We are trying to design a system that works, we want to 
+start building it. Without this detail we can't do fucking anything.
+
+⏺ You're right. I've been too narrow. Let me understand the ENTIRE flow -
+  every procedure, every subroutine, every prompt, every decision point.
+
+⏺ Explore(Complete Cyrus flow exploration)
+  ⎿  Done (35 tool uses · 69.6k tokens · 2m 47s)                           
+
+⏺ Now I have the complete picture. Let me write the comprehensive document.
+
+⏺ Write(research/09-complete-orchestration-flow.md)
+  ⎿  Wrote 574 lines to research/09-complete-orchestration-flow.md         
+     # Cyrus Complete Orchestration Flow
+     **Purpose:** Document the ENTIRE execution system - every procedure,
+     every subroutine, every prompt, every decision point.
+     ---
+     ## Overview
+     Cyrus processes issues through **procedures**. Each procedure is a
+     sequence of **subroutines**. Each subroutine loads a **prompt** and
+     executes Claude/Gemini.
+     … +564 lines (ctrl+o to expand)
+
+⏺ Done. I've written a comprehensive document at
+  research/09-complete-orchestration-flow.md.
+
+  What I Now Understand
+
+  The System Has:
+
+  - 7 Procedures (simple-question, documentation-edit, full-development,
+  debugger-full, orchestrator-full, plan-mode)
+  - 14 Subroutines (each with a prompt file)
+  - 16 Prompt Files (12 subroutine prompts + 4 system prompts)
+
+  The Flow:
+
+  Issue → Labels check → Classification → Procedure selected
+            ↓
+          For each subroutine:
+            1. Resolve prompt (file OR label-based for "primary")
+            2. Execute Claude/Gemini
+            3. Handle flags (singleTurn, approval gate, etc.)
+            4. Advance to next
+
+  The Key Insight:
+
+  The primary subroutine is special - it doesn't load a file. Instead, it
+  resolves a system prompt from labels (debugger.md, builder.md, scoper.md,
+  orchestrator.md).
+
+  All other subroutines load their prompt from src/prompts/{promptPath}.
+
+  For Workflows:
+
+  If we're hooking in, we need hooks at:
+
+  1. Prompt resolution - The critical one. Turn promptPath → file into
+  promptPath + context → logic → content
+  2. System prompt selection - For the primary subroutine
+  3. Subroutine sequence - To allow conditionals, loops, retries
+  4. Model selection - Per-subroutine
+
+  Everything else (Claude execution, Linear posting, session management)
+  stays as-is.
+
+  ---
+  Is this the level of understanding you needed? Should we discuss the hook
+  design now?
+
+> Okay, so the thing to understand is imagine we have a folder and in that 
+folder is the workflow folder and we're calling it 'advanced development' is
+ the name of the workflow. We need to be able to have, if there's 10 entry 
+points, there would be 10 TypeScript files or a single TypeScript file that 
+can understand 10 different calls. If you're on some website, it has to be 
+easy conceptually to understand. It must be easy to improve. So in theory we
+ would number the prompts 1 to 10 in theory. And then if we want to do a 
+prompt inside instead of if we did them 10, 20, 30, 40, 50, so 10 to 100, if
+ we want to do one in between 10 and 20, we could call it 15 and put it 
+between them. Then we have a, you know, we add a hook or whatever. Do you 
+get what I'm trying to say? Because at the moment, yes, you've done an 
+analysis, but it's not useful for what we're attempting to do. What I'm 
+trying to find out is, is the effort we're about to do worth it? We're 
+trying to make a system which is a lot more fluid in testing and 
+development. We want to improve the system. And as it currently stands, the 
+only way of improving it is to change a prompt. When we put a prompt at a 
+certain location, we change the prompt. But that is really difficult if we 
+want to do three things at the same time. The ideal goal is we use one which
+ is already there and we run two other automatic tests with alongside it 
+doing the same thing. So these could be work trees, these could be anything.
+ But the idea being, how do we improve the system if we cannot do side by 
+side comparison? So we want to have a fluid way of adapting the system. You 
+see what I mean? 
+
+⏺ Yes, I understand now. You're asking:
+
+  Given the architecture, is it worth building a fluid hook system that 
+  enables side-by-side A/B testing?
+
+  Let me think about this concretely.
+
+  What You Want
+
+  ~/.cyrus/workflows/advanced-development/
+  ├── 10-classify.ts       ← Hook 1
+  ├── 20-coding.ts         ← Hook 2
+  ├── 25-code-review.ts    ← INSERTED between 20 and 30
+  ├── 30-verify.ts         ← Hook 3
+  ├── 40-git.ts            ← Hook 4
+  ├── 50-summary.ts        ← Hook 5
+  └── prompts/
+      ├── coding/
+      │   ├── control.md       ← Current production
+      │   ├── variant-a.md     ← Test variant A
+      │   └── variant-b.md     ← Test variant B
+      └── ...
+
+  Each hook is TypeScript that receives context and returns a prompt:
+
+  // 20-coding.ts
+  export function resolve(ctx) {
+    // A/B test: different prompts for different worktrees
+    if (ctx.worktreeId === 'control') {
+      return loadPrompt('coding/control.md');
+    } else if (ctx.worktreeId === 'experiment-a') {
+      return loadPrompt('coding/variant-a.md');
+    } else {
+      return loadPrompt('coding/variant-b.md');
+    }
+  }
+
+  The Core Question
+
+  Can we run 3 worktrees simultaneously on the same issue, each with 
+  different prompt variants, and compare results?
+
+  Currently:
+  - Cyrus creates 1 worktree per issue
+  - 1 prompt per subroutine (file on disk)
+  - No way to compare variants
+
+  For A/B testing you need:
+  1. Multiple concurrent executions - Same issue, different prompts
+  2. Variant selection - Hook knows which variant to use
+  3. Result collection - Compare outcomes
+
+  Is It Worth It?
+
+  The hook system itself is easy (~60 lines in Cyrus):
+  // In loadSubroutinePrompt()
+  const hookPath = `~/.cyrus/workflows/${procedure}/hooks/*.ts`;
+  const hooks = await glob(hookPath);
+  const sortedHooks = hooks.sort(); // 10-, 20-, 30- ordering
+
+  for (const hook of sortedHooks) {
+    const result = await import(hook).resolve(context);
+    // Use result...
+  }
+
+  The hard part is parallel execution:
+  - Current orchestrator is sequential (one child at a time)
+  - Need infrastructure to spawn 3 worktrees on same issue
+  - Need to collect and compare results
+
+  My Assessment
+
+  | Component                                          | Effort
+   | Value                          |
+  |----------------------------------------------------|--------------------
+  -|--------------------------------|
+  | Hook system (numbered files, context, resolution)  | Low (~100 lines)
+   | High - enables everything else |
+  | Single-variant override (use hook instead of file) | Low (~60 lines)
+   | Medium - customize per-repo    |
+  | Parallel worktree spawning                         | Medium (~200 lines)
+   | Critical for A/B testing       |
+  | Result comparison/metrics                          | Medium (~150 lines)
+   | High - see what works          |
+
+  The hook system is worth building - it's cheap and unlocks customization.
+
+  The parallel execution is the real question - that's where the complexity
+  is.
+
+  Simpler A/B Alternative
+
+  Instead of parallel worktrees on same issue, you could:
+  1. Create 3 similar test issues
+  2. Each gets different experiment config
+  3. Hook resolves based on issue label or metadata
+  4. Compare across issues
+
+  This works with current infra, no parallel changes needed.
+
+  ---
+  Do you want me to:
+  1. Design the hook folder structure in detail?
+  2. Explore what parallel worktree execution would require?
+  3. Design the simpler label-based A/B approach first?
+
+> Okay, no, you're overcomplicating it. You're misunderstanding, dramatic 
+misunderstanding. We have an orchestrator and the orchestrator is doing 
+things. It's using the MCP tools to create issues and create GitHub changes.
+ So the point is we're going to leave is the exact system that exists. What 
+we want is an ultra simple way. So we're not going to alter GitHub, we're 
+not going to alter those things, all those templates, we're only talking 
+about the prompts. What we're going to do is if we want to run three 
+variations or something, we're going to say that in the issue. In the issue 
+we're going to say, we want to run three variations. And what we're going to
+ do is improve the prompts so it understands what we mean. And it's going to
+ use the MCP tools to create three different, so let's say it's ENG13. It's 
+going to create ENG13, ENG13B, and ENG13C. 13 and A are basically 
+synonymous. So the point is, we start from ENG13, let's say that's what 
+we're doing, that's where I'm saying this. It hits the system, it basically 
+creates a work tree for ENG13 and also does one for B and C because it knows
+ that's what it's doing. The executions are called individual teach one. You
+ see the point? So we're using the system to build the system. We're not 
+breaking the system and doing code that's outside the system. When a task 
+has to be broken down to lots of pieces, it uses sub-issues within linear 
+already set up. So all this will work pretty much instantaneously with very 
+little changes. If we wanted to do the multi-work tree thing, we could do 
+that now without any changes. We just have to update the hook. Potentially 
+it will do it even without updating the prompt that runs it. But we'd have 
+to give some information to understand how we want it to work. Do you 
+understand now? Think about this purely by itself before we move on to the 
+next part. 
+
+⏺ YES. Now I understand.
+
+  We're not changing Cyrus code. We're using the existing system.
+
+  The orchestrator ALREADY:
+  - Creates sub-issues via Linear MCP
+  - Each sub-issue gets its own worktree
+  - Each executes independently
+
+  So for A/B testing:
+
+  ENG-13: "Implement feature X. Run 3 variants to test prompt improvements."
+      │
+      ▼
+  Orchestrator reads this, creates:
+      ├── ENG-13A (control) → worktree 1 → uses default prompt
+      ├── ENG-13B (variant B) → worktree 2 → uses variant B prompt
+      └── ENG-13C (variant C) → worktree 3 → uses variant C prompt
+
+  Each sub-issue runs independently. Each gets its own worktree. This 
+  already works.
+
+  The only thing we need is:
+  1. A prompt that tells the orchestrator how to interpret "run 3 variants"
+  2. A way for each child to know which variant it is (from its issue
+  description or label)
+  3. Prompt resolution that reads "I am variant B" from context and loads
+  the right prompt
+
+  No infrastructure changes. Just smarter prompts.
+
+  The "hook" is just: when loading a prompt, check the issue context to see
+  if it specifies a variant. If so, load that variant's prompt file instead
+  of the default.
+
+  Is that correct?
+
+> Now remember we'd be telling it what to do, so in theory we create labels 
+for the different types of environment and we just add labels to it to 
+control which one's running. That's a very easy thing to do. But actually 
+I'm thinking slightly different to 'you are'. These are not variations as 
+you're thinking of variations. What I'm saying is depending on what we're 
+attempting to do we're going to tell Cyrus what we're doing. It's going to 
+build knowing what we're doing. Because when we add the evolution system 
+it's all part of the same thing. Evolution is using Cyrus. It's all 
+connected. So the point we're trying to do is minimum variation. We're 
+starting from structure. We want structure to be done with minimal changes 
+to allow us to hook prompts. The thing we're going to do is improve the 
+system that currently works. And that means we're going to run side by side.
+ We're going to say, let's say the first one's called 'develop', the same 
+one's called 'develop advanced'. We're going to say to the orchestrator, 
+'okay, so let's run this, do this in both 'develop' and 'develop advanced' 
+so we can test the comparison of both things. So what it will do is by 
+telling it that and saying, 'now go ahead and fix this'. And the feature 
+it's going to be building would go through both of those work trees because 
+it knows of the work trees existence and it knows what to do to build them. 
+You see what I mean? We're not hiding anything. We're making everything very
+ explicit and very obvious. Thank you. Evolution, however, is outside of the
+ understanding of the running Cyrus. It uses Cyrus but it isn't in, so it 
+can't be used or manipulated, etc. Evolution runs after things happen. It 
+looks at the logs, it looks at what was written, it looks at the work trees,
+ it compares the output of things. It could look at what the code quality is
+ like, the number of errors that appeared, how close it was to completion, 
+it could look at the quality of the plans, etc, etc, etc, lots of things it 
+could do. And it's going to be using existing patents, existing code, 
+existing systems that have been proven to improve prompts. These are 
+external systems that we're now using, they're using Cyrus to effectively 
+run it, but Cyrus is going to be oblivious to it. Do you understand? 
+
+⏺ Yes. Now I fully understand.
+
+  Two Completely Separate Systems
+
+  Cyrus (Execution)
+  - Runs procedures
+  - Is told EXPLICITLY what to do
+  - "Run this in both 'develop' and 'develop-advanced'"
+  - Creates worktrees for both, executes both
+  - Transparent - nothing hidden
+  - Does not know Evolution exists
+
+  Evolution (Improvement)
+  - Runs AFTER Cyrus completes
+  - Analyzes: logs, outputs, code quality, errors, completion rates, plan
+  quality
+  - Compares results across the worktrees
+  - Uses proven external systems (DSPy, etc.) to improve prompts
+  - Updates prompt files for next time
+  - Cyrus is oblivious to it
+
+  The Flow
+
+  1. Human creates issue: "Fix bug X. Run in 'develop' and
+  'develop-advanced'"
+         │
+         ▼
+  2. Cyrus (orchestrator) reads this, creates:
+         ├── Worktree A → runs 'develop' workflow prompts
+         └── Worktree B → runs 'develop-advanced' workflow prompts
+         │
+         ▼
+  3. Both complete. PRs created. Logs written.
+         │
+         ▼
+  4. Evolution (separately, later) looks at:
+         - Logs from both
+         - Code quality
+         - Errors encountered
+         - Completion success
+         - Plan quality
+         │
+         ▼
+  5. Evolution improves prompts using proven systems
+         │
+         ▼
+  6. Next time Cyrus runs, it uses the improved prompts
+     (without knowing why they're better)
+
+  What We Need for Cyrus
+
+  Minimal:
+  1. Folder structure for workflow prompts (~/.cyrus/workflows/develop/,
+  ~/.cyrus/workflows/develop-advanced/)
+  2. Way to tell Cyrus which workflow to use (labels or issue text)
+  3. Prompt loading checks custom folder before default
+
+  That's it. No awareness of Evolution. Just "load prompts from here instead
+   of there."
+
+  What Evolution Does (Separate)
+
+  - Reads Cyrus logs
+  - Compares outputs
+  - Uses DSPy/TensorZero/etc.
+  - Writes improved prompts to the workflow folders
+  - Cyrus picks them up next run
+
+  Clean separation. Cyrus executes. Evolution improves. They don't talk to
+  each other.
+
+  Is this the understanding?
+
+> That's correct. The thing to understand however is a person, me, has to 
+improve the workflows. So it's important that I'm able to understand what 
+the workflows are doing. So this is the whole point I'm saying. That's why I
+ keep asking you to come back to this point. I'm saying potentially 10, 20, 
+30. It's still not useful. So if you look at what you've written, you've 
+basically said, if I go back away, you're basically saying, where on earth 
+was it? Before that one. Goodness gracious. Oh, it's in the document. Sorry,
+ that's why. Okay, so in the document you wrote a zero nine complete 
+orchestration flow. You've basically got summary, the hook points. Number 
+one, procedure selection, AI classification, label override. We're not 
+changing that. Number two, subroutine sequence, static array, dynamic 
+conditional sequence. What the fuck is that? That doesn't mean anything. You
+ see what I mean? You're making it, I don't know what the fuck we're 
+supposed to update. Then it goes, number three, prompt path content, file 
+read, AB test. What? I don't know how to use any of this. You see the 
+problem I'm saying? And so then if I look at the output you did a few 
+seconds ago, going back to it, we've got when we'd locked out systems, 
+you're going, My assessment of the component hook system, number file 
+context resolution. Then second part, single variant override, use hook 
+instead of file. Parallel work tree spawning. Can't do that. We're never 
+talked about that. Get rid of that idea. That's already dealt with in the 
+system. Result comparison. Again, don't look at that. You're not part of the
+ system that's evolved. You see the point? You're over complicating it. I 
+need a simple understanding. This is what we're running. So therefore it has
+ to be easy. Now we talked about a TypeScript file with JS doc in it. More 
+than likely it's a document describing what is actually happening because at
+ the moment it's still way too complicated to be usable to understand how to
+ improve the system. You've got loops inside loops and I do not know what 
+loops are. How do I know it's a loop? How do I know it? Is there a way of 
+it? You say sometimes a loop. So for example, you've got code. Let's find 
+the code one. That's the easiest one. Let's start from code. What's a loop? 
+Where on earth are we? Goodness, I can't find it. It was basically a repeat 
+or a loop. How did you call it? I can't find it. So now I am looking through
+ the stuff and I cannot see what I'm looking for. I think it's because I've 
+got too much information now. You basically mentioned some stuff loops and 
+repeats. And again, the problem is what it said was code then debug and then
+ and it's looping around. I'm assuming when things fail. If we were to apply
+ TDD to it, I'd actually like those three separate steps. Test the failure 
+first. That's a loop until complete. Then the next one's a loop when it 
+actually writes the, you know, so it writes the failing test first. Then it 
+writes the code. Then it writes the passing. You see what I mean? So we want
+ the two loops. We don't want to use that as a loop that's not strong 
+enough. We want to break up and add extra. So if we were to do that, how do 
+I add an extra step between them? You see what I mean? So it would be 
+somehow we have to make these obvious. Do we name the file repeat? So we 
+know, I'm not sure it's repeat. You'll have to tell me what it is. You do 
+you understand the making. This has to be really easy to understand. If I 
+have a list of five things, I need to be able to go, okay, they're named 
+correctly. I know what they're doing. So if one's code build test, it should
+ be called code build test and then maybe hyphen repeat because it's a loop 
+or hyphen loop. You see that what I'm trying to get at. I need a way to look
+ at a folder structure code. I understand what it's doing. It's really easy 
+to go. Let's duplicate that file. Let's rename it this list. Let's call 
+that. We know it's calling this prompt. Maybe it's alongside it at the same 
+level. Do you get what I'm trying to say? 
+
+⏺ You're absolutely right. I've been overcomplicating this. Let me think
+  simply.
+
+  What You Need
+
+  A folder structure where:
+  1. You look at it and understand the flow
+  2. You can add a step by creating a file
+  3. You can see if something loops/repeats from the filename
+  4. You can duplicate and modify easily
+
+  Simple Folder Structure
+
+  ~/.cyrus/workflows/develop-advanced/
+  ├── 10-understand-requirements.md
+  ├── 20-write-failing-test.LOOP.md      ← LOOP = retries until success
+  ├── 30-implement-to-pass.LOOP.md       ← LOOP = retries until tests pass
+  ├── 40-verify-all.md
+  ├── 50-git-commit-pr.md
+  └── 60-summary.SINGLE.md               ← SINGLE = exactly one turn
+
+  The Rules
+
+  | Suffix     | Meaning                 |
+  |------------|-------------------------|
+  | .md        | Run once, multi-turn    |
+  | .LOOP.md   | Retry until success     |
+  | .SINGLE.md | Exactly one turn        |
+  | .GATE.md   | Wait for human approval |
+
+  Adding a Step
+
+  Want to add code review between 30 and 40?
+
+  ├── 35-code-review.md                  ← Just create this file
+
+  Done. The number puts it in order. The name says what it does.
+
+  Creating a Variant
+
+  cp -r develop-advanced develop-tdd-strict
+  # Edit the files you want to change
+
+  What's in Each File
+
+  Just the prompt. Nothing else.
+
+  # Write Failing Test
+
+  Write a test that demonstrates the bug or missing feature.
+
+  The test MUST fail. If it passes, you haven't captured the requirement
+  correctly.
+
+  ## Steps
+  1. Identify what needs to be tested
+  2. Write the minimal test
+  3. Run it
+  4. Confirm it fails for the right reason
+
+  ## Success Criteria
+  - Test exists
+  - Test fails
+  - Failure message describes the expected behavior
+
+  ---
+  Is this the simplicity you're looking for?
+
+  - Numbered files = order
+  - Filename = what it does
+  - Suffix = behavior (LOOP, SINGLE, GATE)
+  - File content = just the prompt
+
+> It's interesting how I don't think you need single. They're all single 
+aren't they? Apart from obviously loop. But the next bit is logic. We won't 
+put something in and make it loop. We don't know how to do that because the 
+code doesn't currently loop. The code currently doesn't have that ability. 
+You see what I mean? So the workflow is a single TS file that's controlling.
+ It's basically saying that we're saying that there are already hooks in the
+ code that are running some things. How do we change this? Because we're 
+either hooking into what the code already does, or we're moving the loops 
+into our TS and that's what's calling the code that's already there. If the 
+code has two steps and we're trying to do four, how do we do that? Do you 
+get what I'm after? I'm trying to get clarity on this and you're still 
+missing the point. This is correct, but there's two sides to this. Not just 
+this one side. Do you understand? Think deeply. 
+
+⏺ You're right. I'm only showing one side. Let me think about both.
+
+  The Two Sides
+
+  Side 1: The Prompts (what I showed)
+  ├── 10-understand-requirements.md
+  ├── 20-write-failing-test.md
+  ├── 30-implement-to-pass.md
+  └── ...
+
+  Side 2: The Logic (what I haven't addressed)
+
+  Cyrus currently has FIXED procedures:
+  full-development = [coding-activity, verifications, git-gh, summary]
+
+  That's 4 steps. No loops. Hardcoded sequence.
+
+  If we want 6 steps with loops, we have two options:
+
+  ---
+  Option A: Hook Prompts Only (Limited)
+
+  We can swap WHICH prompt loads, but we can't:
+  - Add steps
+  - Loop steps
+  - Change the sequence
+
+  This is what loadSubroutinePrompt() gives us. Prompt swapping only.
+
+  ---
+  Option B: Control Flow from Outside (Full Control)
+
+  A workflow.ts file that:
+  1. Reads the numbered .md files
+  2. Calls Cyrus for each step
+  3. Handles loops itself
+  4. Cyrus just executes a single prompt and returns
+
+  // workflow.ts - THIS controls the flow
+  export async function run(ctx) {
+    // Step 10
+    await ctx.runPrompt('10-understand-requirements.md');
+
+    // Step 20 - LOOP until test fails
+    let result;
+    do {
+      result = await ctx.runPrompt('20-write-failing-test.md');
+    } while (!result.testFails);
+
+    // Step 30 - LOOP until tests pass
+    do {
+      result = await ctx.runPrompt('30-implement-to-pass.md');
+    } while (!result.testsPassing);
+
+    // Step 40-60 - run once each
+    await ctx.runPrompt('40-verify-all.md');
+    await ctx.runPrompt('50-git-commit-pr.md');
+    await ctx.runPrompt('60-summary.md');
+  }
+
+  Here:
+  - The .md files are just prompts (no logic)
+  - The .ts file has all the logic (sequence, loops, conditions)
+  - Cyrus becomes the executor, not the orchestrator
+
+  ---
+  The Question
+
+  Which approach are we taking?
+
+  Option A = minimal changes, but we're limited to what Cyrus already does
+  (4 steps, no loops)
+
+  Option B = workflow.ts controls everything, Cyrus just runs individual
+  prompts
+
+  If Option B, then the folder looks like:
+  ~/.cyrus/workflows/develop-advanced/
+  ├── workflow.ts                        ← The logic (loops, sequence)
+  └── prompts/
+      ├── 10-understand-requirements.md
+      ├── 20-write-failing-test.md
+      ├── 30-implement-to-pass.md
+      └── ...
+
+  Is this the clarity you're looking for? The .ts file IS necessary for
+  loops - the .md files alone can't express that.
+
+> So the point is, you're asking me, you're asking the wrong person. Look at
+ the code that currently exists. We are duplicating what is already there 
+because we're trying not to reinvent the wheel. So if Cyrus has await CTX 
+run prompt, if that's what it's using, which I do not think it is, that is 
+not what we're doing. We're doing exactly what it is doing. So if you're 
+saying it's hardware development, is that a file called development? Is that
+ where the hardware is coming from? In which case we just duplicate that 
+file, call it something else, use exactly its code, we just move it to our 
+location. You see the point I'm saying? It should be a Cyrus file. The way 
+Cyrus does things. We're not trying to change it. We're trying to build it 
+in exactly the same way. Just calling our file instead of its file. Do you 
+get the point? We override it effectively. Then we add an extra loop if we 
+want an extra loop, we add a single pass if we want a single pass. 
+
+⏺ You're right. I should look at what Cyrus ACTUALLY has, not invent
+  something new.
+
+  Let me find the actual procedure definition file in Cyrus.
+
+⏺ Explore(Find actual procedure code)
+  ⎿  Done (16 tool uses · 42.3k tokens · 48s)                              
+
+⏺ Now I see exactly what Cyrus does.
+
+  What Actually Exists
+
+  Procedure definition (in registry.ts):
+  "full-development": {
+    name: "full-development",
+    subroutines: [
+      SUBROUTINES.codingActivity,
+      SUBROUTINES.verifications,
+      SUBROUTINES.gitGh,
+      SUBROUTINES.conciseSummary,
+    ],
+  },
+
+  Subroutine definition:
+  codingActivity: {
+    name: "coding-activity",
+    promptPath: "subroutines/coding-activity.md",
+    singleTurn: false,
+    requiresApproval: false,
+    // ...
+  },
+
+  Execution logic (in ProcedureRouter.ts):
+  - Just increments an index: currentSubroutineIndex++
+  - No loops. Run [0], then [1], then [2], done.
+
+  To Duplicate This Externally
+
+  The simplest approach that matches Cyrus exactly:
+
+  ~/.cyrus/workflows/develop-advanced/
+  ├── procedure.json              ← Mirrors registry.ts entry
+  └── prompts/
+      ├── 10-coding-activity.md
+      ├── 20-verifications.md
+      ├── 30-git-gh.md
+      └── 40-summary.md
+
+  procedure.json:
+  {
+    "name": "develop-advanced",
+    "subroutines": [
+      { "name": "coding-activity", "promptPath": "10-coding-activity.md" },
+      { "name": "verifications", "promptPath": "20-verifications.md" },
+      { "name": "git-gh", "promptPath": "30-git-gh.md" },
+      { "name": "summary", "promptPath": "40-summary.md", "singleTurn": true
+   }
+    ]
+  }
+
+  This is exactly what Cyrus already does, just in ~/.cyrus/workflows/
+  instead of registry.ts.
+
+  For Loops
+
+  The current system has no loop mechanism. To add loops, we extend the
+  format:
+
+  {
+    "subroutines": [
+      { "name": "write-failing-test", "promptPath": "...",
+  "repeatUntilSuccess": true },
+      { "name": "implement", "promptPath": "...", "repeatUntilSuccess": true
+   },
+      { "name": "verify", "promptPath": "..." },
+      { "name": "summary", "promptPath": "...", "singleTurn": true }
+    ]
+  }
+
+  Then one small change in ProcedureRouter.advanceToNextSubroutine():
+  // Don't advance if repeatUntilSuccess and result was failure
+  if (currentSubroutine.repeatUntilSuccess && !result.success) {
+    return; // Stay on same subroutine
+  }
+  procedureMetadata.currentSubroutineIndex++;
+
+  That's maybe 5-10 lines of change in Cyrus to enable loops.
+
+  ---
+  Is this the pattern you want? Duplicate the exact Cyrus format, put it in
+  ~/.cyrus/workflows/, add repeatUntilSuccess flag for loops?
+
+> Looks already exist inside Cyrus, please look properly. "singleTurn: 
+true," This obviously means don't do it in a loop and I'm assuming 
+everything else does do it in a loop. You're looking at one now. Please look
+ at the code properly and stop guessing. You're guessing all the time and 
+it's furious. This has taken three days to get to where we are. This should 
+have taken two hours. 
+  ⎿ ⧉ Selected 1 lines from ../packages/edge-worker/src/procedures/registry.ts
+    in Visual Studio Code
+
+⏺ You're right. I need to look at the actual code, not guess. Let me find
+  how singleTurn is used and what happens when it's false.
+
+⏺ Search(pattern: "singleTurn", path:
+        "~/.cyrus/repos/cyrus/packages/edge-worker/src", output_mode: "content")
+  ⎿  Found 171 lines (ctrl+o to expand)
+
+⏺ I see singleTurn: true converts to maxTurns = 1. Let me find what happens
+  when singleTurn is NOT set - what does maxTurns = undefined mean?
+
+⏺ Search(pattern: "maxTurns", path: "~/.cyrus/repos/cyrus/packages",
+        output_mode: "content")
+  ⎿  Found 327 lines (ctrl+o to expand)
+
+⏺ I see. So:
+  - singleTurn: true → maxTurns = 1 (one shot)
+  - singleTurn: false/undefined → Claude can iterate (multi-turn, up to
+  default ~10 turns)
+
+  So the "loop" is WITHIN a subroutine - Claude keeps working until done.
+  Let me check what happens when a subroutine COMPLETES - does it check
+  success/failure? Does it retry?
+
+⏺ Read(~/.cyrus/repos/cyrus/packages/edge-worker/src/AgentSessionManager.ts)
+  ⎿  Read 150 lines
+
+⏺ Now I see clearly.
+
+  What Actually Exists
+
+  Two modes for a subroutine:
+
+  | Flag                        | Behavior
+                                              |
+  |-----------------------------|-------------------------------------------
+  --------------------------------------------|
+  | singleTurn: true            | One turn. Claude responds once, done.
+                                              |
+  | singleTurn: false/undefined | Multi-turn. Claude iterates (uses tools,
+  thinks, repeats) until it decides it's done. |
+
+  No retry on failure. When a subroutine completes (success OR failure), it
+  just advances to the next one. Line 402:
+  this.procedureRouter.advanceToNextSubroutine(session, sessionId);
+
+  No check for success. Just moves on.
+
+  The Existing Flags
+
+  From registry.ts:
+  - singleTurn: boolean - one turn vs multi-turn
+  - requiresApproval: boolean - pause for human
+  - suppressThoughtPosting: boolean - don't post thoughts to Linear
+  - disallowedTools: string[] - block certain tools
+
+  What We Can Duplicate
+
+  The folder structure mirrors registry.ts exactly:
+
+  ~/.cyrus/workflows/develop-advanced/
+  ├── procedure.json
+  └── prompts/
+      ├── 10-coding.md
+      ├── 20-verify.md
+      ├── 30-git.md
+      └── 40-summary.md
+
+  procedure.json:
+  {
+    "name": "develop-advanced",
+    "subroutines": [
+      { "name": "coding", "promptPath": "10-coding.md" },
+      { "name": "verify", "promptPath": "20-verify.md" },
+      { "name": "git", "promptPath": "30-git.md" },
+      { "name": "summary", "promptPath": "40-summary.md", "singleTurn": true
+   }
+    ]
+  }
+
+  Same structure. Same flags. Just external.
+
+  If we want TDD (write-failing-test loop), we'd add a subroutine. The
+  "loop" is Claude iterating within that subroutine until tests fail. No
+  code change needed - just a good prompt that says "keep going until you
+  have a failing test."
+
+  Is this the clarity you needed?
+
+> So what we want to do is take the routine we're looking at overriding, 
+move it into Cyrus, into the thing we want to run, and then we should be 
+able to execute it exactly as is. Now the second part of this is, yes that's
+ a duplicate workflow. First confirm that will work, I believe it will. If 
+we simply did that and get it to read from this new path instead of where it
+ is, that might just be an override. Instead of changing any code at all, we
+ just simply override where it's loading that file. And as long as that file
+ is able to load the rest, so maybe telling it where to find things and then
+ we're done. That means we're using Cyrus's code in a different location, it
+ should be extremely simple to work with. The second part then is, remember 
+that we're running multiple versions of it. So that means do we do develop 
+advanced, develop advanced v1, v2, v3, v4, so that when the system calls it 
+knows to call it. I'm assuming these have to all be loaded simultaneously so
+ that Cyrus can go, "Oh I'm running develop advanced v1 for this one and I'm
+ running develop advanced v2 for that one." So it understands. The second 
+part is to maintain improvements of prompts. We can't just change the prompt
+ where it is, we have to improve it. So that is things of, you know, we're 
+trying to log what changes we're doing. So that in theory means alongside 
+prompts we might have prompt versions, in which case we've got a folder for 
+10 coding and inside it it's got 1, 2, 3, 4, 5, you know, the ones that are 
+becoming there. So in theory it renders from the version out into prompts 
+and prompt is what's running. But prompts is never what we edit, we always 
+edit versions. If you see the thought and thinking as in, how do we improve 
+things without losing the thing we're improving? We want to be able to do 
+diffs, we want to be able to do A/B testing. Clicking on the prompt, it'd be
+ an update, looking at diff, we're able to go version 1 was this, version 2 
+was that, version 3 was that, version 4 was that. Because we want to improve
+ these things quite rapidly, sometimes through the evolution system, other 
+times just by ourselves. So yes, we have the ability to run different 
+workflows simply by creating them. But then we have the other side of 
+improving things without it being aware of the improvements, in which case 
+we're tracking externally, it runs, it's completely unaware it's been 
+improved because 10 coding's been updated. But the version file is 
+containing all of the 10 coding ones, version 1, version 2, version 3, 
+version 1, version 2, version 1, version 2, version 1, version 2, version 1,
+ version 2, version 1. And it also has to have the reasoning behind it, 
+which we've talked about before. So when we're updating this, we're 
+basically saying this is the reason we're updating the prompts. And so 
+therefore it's a JSON or something like it, some sort of structure. Now we 
+want to save that somewhere, we're trying to standardise everything to 
+GitHub. But there has to be a logic that's being read, there has to be some 
+where this is. So hence what I'm saying if we do it as simple JSONs, we have
+ a log file, the way logs are done, it's writing different things out. I'm 
+imagining we can do something similar. We have a folder for each one, 
+there's a log, a file inside it and it's describing everything about it. 
+Then we have the different versions, maybe we extend that JSON file. If you 
+do version 1, the stuff inside we want improved by this. We add another line
+ to the JSON and then there's a new file. What's the best, simplest, most 
+elegant way of improving this? It's extremely easy to see what's changing. 
+So let's see what's changing. 
+  ⎿ ⧉ Selected 1 lines from ../packages/edge-worker/src/procedures/registry.ts
+    in Visual Studio Code
+
+⏺ Let me think through this clearly.
+
+  Part 1: Override Location (Simplest Change)
+
+  Cyrus currently loads from:
+  packages/edge-worker/src/prompts/subroutines/coding-activity.md
+
+  We want it to check first:
+  ~/.cyrus/workflows/develop-advanced/prompts/10-coding.md
+
+  If found, use ours. If not, fall back to default. One path override, 
+  that's it.
+
+  Part 2: Multiple Versions for A/B Testing
+
+  ~/.cyrus/workflows/
+  ├── develop-advanced-v1/          ← Control
+  ├── develop-advanced-v2/          ← Experiment A
+  └── develop-advanced-v3/          ← Experiment B
+
+  Orchestrator is told: "Run this issue in v1, v2, v3" → creates 3 worktrees
+   → each uses its workflow.
+
+  Part 3: Prompt Versioning (The Key Insight)
+
+  Never edit prompts directly. Edit versions. Render to prompt.
+
+  ~/.cyrus/workflows/develop-advanced-v1/
+  ├── procedure.json
+  └── prompts/
+      └── 10-coding/
+          ├── versions.jsonl        ← Append-only log of changes
+          ├── v1.md                 ← Original
+          ├── v2.md                 ← Improvement
+          ├── v3.md                 ← Current
+          └── prompt.md             ← Active version (copy of v3.md)
+
+  versions.jsonl (append-only, like a log):
+  {"version":"v1","created":"2024-01-15T10:00:00Z","author":"human","reasoni
+  ng":"Initial version from Cyrus defaults"}
+  {"version":"v2","created":"2024-01-16T14:30:00Z","author":"evolution","rea
+  soning":"Added error handling - 23% failures from unclear recovery","from"
+  :"v1","metrics":{"before":{"success":0.77},"after":{"success":0.89}}}
+  {"version":"v3","created":"2024-01-17T09:00:00Z","author":"human","reasoni
+  ng":"Simplified language, removed redundancy","from":"v2"}
+
+  What you see:
+  - v1.md, v2.md, v3.md - Easy to diff
+  - versions.jsonl - Complete history with reasoning
+  - prompt.md - What Cyrus actually loads (copy of active version)
+
+  Part 4: How Improvement Works
+
+  To improve 10-coding:
+
+  1. Copy v3.md → v4.md
+  2. Edit v4.md
+  3. Append to versions.jsonl:
+  {"version":"v4","created":"...","author":"human","reasoning":"Why I made 
+  this change","from":"v3"}
+  4. Copy v4.md → prompt.md
+
+  Cyrus loads prompt.md. It has no idea versions exist. Evolution reads
+  versions.jsonl to understand history.
+
+  Complete Structure
+
+  ~/.cyrus/workflows/develop-advanced-v1/
+  ├── procedure.json                    ← Sequence definition
+  └── prompts/
+      ├── 10-coding/
+      │   ├── versions.jsonl            ← History + reasoning
+      │   ├── v1.md
+      │   ├── v2.md
+      │   ├── v3.md                     ← Latest
+      │   └── prompt.md                 ← Active (Cyrus reads this)
+      ├── 20-verify/
+      │   ├── versions.jsonl
+      │   ├── v1.md
+      │   └── prompt.md
+      ├── 30-git/
+      │   └── ...
+      └── 40-summary/
+          └── ...
+
+  Diffing: diff v2.md v3.md
+
+  History: Read versions.jsonl
+
+  Running: Cyrus loads prompt.md, unaware of versions
+
+  Is this the structure you're looking for?
+
+> Yeah, kind of. The issue is versioning is being run by the evolutionary 
+system, not our system. So our system has to be able to just load a file. It
+ doesn't care what the prompt is. So what that basically means is we have to
+ have code coming in and it being able to load depending on what it is. And 
+since this is, you know, ABCD, how do we know which one we're running ABCD? 
+What I mean by that is the orchestrator knows what it's asking and therefore
+ it loads the relevant thing. So if we have, are we going to do iterations 
+of a prompt where the same thing is being run three times and the versioning
+ is the one controlling it? That means that the prompt is dynamically, 
+potentially dynamically created as it's loaded rather than... You see the 
+point which means it's good to see a prompt because then we see what we're 
+writing if the AI improves it. But we need versioning be the one doing it, 
+sorry, evolution to be doing this. So hence why we need simplicity from our 
+code but... and hence why I was saying versions in a different folder. 
+That's why I was saying that rather than 10 coding being a folder. It's an 
+interesting idea but I don't think it's right. Mainly because we're adding 
+complexity to what we're building now instead of flexibility in evolution 
+when we build that. 
+
+⏺ You're right. I'm overcomplicating it.
+
+  What We Build Now (Simple)
+
+  Cyrus just loads a file. That's it.
+
+  ~/.cyrus/workflows/
+  ├── develop-advanced/
+  │   ├── procedure.json
+  │   └── prompts/
+  │       ├── 10-coding.md
+  │       ├── 20-verify.md
+  │       ├── 30-git.md
+  │       └── 40-summary.md
+
+  Cyrus code:
+  1. Check if ~/.cyrus/workflows/{procedure-name}/ exists
+  2. If yes, load procedure.json and prompts from there
+  3. If no, use internal registry
+
+  That's the entire hook. Load from here instead of there.
+
+  A/B Testing (Also Simple)
+
+  Different workflow folders:
+
+  ~/.cyrus/workflows/
+  ├── develop-advanced/           ← Control
+  ├── develop-advanced-exp-a/     ← Experiment A
+  └── develop-advanced-exp-b/     ← Experiment B
+
+  Orchestrator is told "run in develop-advanced-exp-a" → Cyrus loads from
+  that folder.
+
+  Each folder is independent. Different prompts, same structure.
+
+  Evolution (Built Later, Separate)
+
+  Evolution will:
+  - Create new workflow folders
+  - Modify prompts
+  - Track versions however it wants
+  - Compare results
+
+  That's Evolution's problem, not ours now.
+
+  What We Build
+
+  1. One path override - Check ~/.cyrus/workflows/{name}/ before internal
+  2. Load procedure.json - Same format as registry.ts
+  3. Load prompts from that folder - Simple file read
+
+  No versioning logic. No complexity. Just: load from external folder if it
+  exists.
+
+  Is this the right scope?
+
+> Okay, we're building the structure now that we're loading. We're not 
+building the structure for evolution, but we're still building the structure
+ now. I do not want to change the structure later. That's why we spent this 
+time thinking this through. We're building the structure for what we're 
+building because evolution will be being built every single day moving 
+forward. Every hour of every day we're keeping moving. We're not doing 
+something later. There's no such thing as later. What there is is a 
+separation of concerns. Not later. Do you understand the difference? We're 
+creating a structure that works for this now, so we do not have to modify it
+ later. We're doing thinking upfront in great detail. Then we're deleting 
+what's needed today, but we're still doing massive thinking. Following Elon 
+Musk's whole metaphor of even smart people don't think enough, really deeply
+ think about the problem you're trying to solve, then delete things that 
+aren't necessary. If you're not doing that, you're not thinking it through 
+properly and you're not deleting enough. This is what we are doing. 
+
+⏺ You're right. I need to think this through completely NOW, then build only
+   what's needed. Not defer thinking - defer building.
+
+  Let me think deeply about the structure.
+
+  The Core Requirements
+
+  Cyrus (today):
+  - Load procedure definition
+  - Load prompts
+  - Simple file reads
+
+  Evolution (separate system, uses same structure):
+  - Track versions with reasoning
+  - Compare variants
+  - See diffs easily
+  - Activate versions
+
+  The Structure
+
+  ~/.cyrus/workflows/develop-advanced/
+  ├── procedure.json              ← Procedure definition
+  ├── prompts/                    ← What Cyrus loads (active prompts)
+  │   ├── 10-coding.md
+  │   ├── 20-verify.md
+  │   ├── 30-git.md
+  │   └── 40-summary.md
+  └── versions/                   ← What Evolution manages
+      ├── 10-coding/
+      │   ├── v1.md
+      │   ├── v2.md
+      │   ├── v3.md
+      │   └── history.jsonl
+      ├── 20-verify/
+      │   └── ...
+      └── ...
+
+  How It Works
+
+  Cyrus:
+  load(`prompts/10-coding.md`)
+  That's it. Doesn't know about versions.
+
+  Evolution:
+  1. Creates new version in versions/10-coding/v4.md
+  2. Appends to versions/10-coding/history.jsonl
+  3. Copies v4.md → prompts/10-coding.md
+
+  Cyrus picks up the new prompt next run. Unaware anything changed.
+
+  Diffing:
+  diff versions/10-coding/v2.md versions/10-coding/v3.md
+
+  History:
+  cat versions/10-coding/history.jsonl
+
+  Separation of Concerns
+
+  | Folder    | Owner     | Purpose                      |
+  |-----------|-----------|------------------------------|
+  | prompts/  | Cyrus     | Active prompts, what runs    |
+  | versions/ | Evolution | History, versions, reasoning |
+
+  They share the same workflow folder, but different subfolders. No overlap.
+
+  What We Build Today
+
+  1. Cyrus loads from ~/.cyrus/workflows/{name}/prompts/
+  2. Create the folder structure
+  3. Copy existing prompts as v1
+
+  We don't build version management code. But the structure is ready for it.
+
+  Is this the right separation?
+
+> Okay, let's think through, because you're just doing different versions 
+now for the sake of doing versions, you haven't thought anything through at 
+all. Okay, let's look at this, let's look at the question I was asking. If 
+we were to build a workflow, we're building a workflow, that will be 
+improved by the evolution system, that's the point. So we have a workflow, 
+the workflow, let's say it's called development advanced, it makes sense. 
+We're asking it to use that workflow, the workflow itself is going to be 
+versioned. It's going to be evolving, so therefore, what does evolving mean?
+ evolving means, over time the thing will change, therefore we have to have 
+a version history. The second thing it means is, we might be alternating per
+ run. The third thing it means is, we might run three versions of something 
+simultaneously, and the three different versions of the same system. Yes? 
+I.e., we're not necessarily versioning everything, but we could be 
+versioning everything, we're not doing it as a single part. So, if for 
+example, what I'm saying is, if we follow your idea, code verify get 
+summary, verify get summary, verify get summary, it's not what we're doing, 
+but let's just assume we are. We could version each one of those four 
+stages, but they're separate versioning systems, the evolution platform 
+knows what it's doing, it may do one, it may do all four, we don't care, the
+ result is the same. What that basically means is, we have to have code that
+ makes the decision of what to do. So, we are replacing a file, and the file
+ has a JSON, and the JSON saying, this is what to load. In order to run, 
+let's say, three versions of the same thing, because we're testing it, we 
+can't have three folders with different names, because Cyrus doesn't know 
+about this, evolution knows about this, Cyrus doesn't. Cyrus thinks it's 
+running three of the same thing. So, for example, we'd say, run three, we're
+ doing a font change on this, run three versions, create them as sub, what 
+do you call them, work trees, so sub issues. We want three different 
+versions, we want to compare the quality of them, use development advanced 
+for the production, so it'll add tag for development advanced, it will 
+basically create three sub issues. It's unaware that when our code runs, 
+when evolution has basically created three versions, that it's decided what 
+it wants to test. It's basically going when you're doing three versions, I 
+want to test three different coding, I want to keep verify the same, get the
+ same on both, but I want to evolve summary. So, it's going to do three 
+coding and three summary, the other two remain the same. Cyrus doesn't know 
+that. How do we do that? How do we create that? I believe how we create that
+ is we have a TypeScript file that gets loaded, not a procedure JSON file, a
+ TypeScript file that says this is what you need to load. So, when it comes 
+in, it says, I need to load, and it goes, here's your version. And the 
+second one, it goes, here's your version. And the third one, it goes, here's
+ your version, i.e., what the code is returning is different paths and 
+different JSONs. They're dynamically created by what versioning is trying to
+ do. So, versioning would be controlling that file. It's basically 
+determining what's happening. Cyrus is not. We are not. We are just going, 
+these are the files we are creating. It is creating the versioning, not us. 
+Do you understand? Do you understand? What am I not thinking about? 
+
+⏺ Now I understand. Let me think through this properly.
+
+  The Core Problem
+
+  Cyrus runs "develop-advanced" three times. It thinks they're identical.
+  But Evolution has decided:
+
+  - Run 1: coding-v1, verify-v1, git-v1, summary-v1
+  - Run 2: coding-v2, verify-v1, git-v1, summary-v2
+  - Run 3: coding-v3, verify-v1, git-v1, summary-v3
+
+  Cyrus doesn't know. Evolution knows.
+
+  The Solution: A Resolver
+
+  Not a JSON file. A TypeScript function that gets called at load time.
+
+  // ~/.cyrus/workflows/develop-advanced/resolver.ts
+
+  export function resolve(context: ResolverContext): ResolvedWorkflow {
+    // Context includes: issueId, worktreeId, labels, metadata
+
+    // Return the prompts to use
+    return {
+      procedure: { ... },
+      prompts: {
+        'coding': '...prompt content...',
+        'verify': '...prompt content...',
+        'git': '...prompt content...',
+        'summary': '...prompt content...',
+      }
+    };
+  }
+
+  Cyrus calls this function. The function decides what to return.
+
+  How Evolution Controls It
+
+  Evolution doesn't modify Cyrus. It modifies the resolver or what the
+  resolver reads.
+
+  Option A: Evolution modifies resolver.ts directly
+  Option B: Resolver reads from a config file that Evolution writes
+
+  I think B is cleaner:
+
+  // resolver.ts (static, we write once)
+  export function resolve(context: ResolverContext): ResolvedWorkflow {
+    // Check if this issue is in an experiment
+    const experiment = loadExperimentConfig(context.issueId);
+
+    if (experiment) {
+      return {
+        prompts: {
+          'coding': loadVersion('coding', experiment.codingVersion),
+          'verify': loadVersion('verify', experiment.verifyVersion),
+          // ...
+        }
+      };
+    }
+
+    // Default: load from prompts/
+    return loadDefault();
+  }
+
+  Evolution writes the experiment config. Resolver reads it.
+
+  The Flow
+
+  1. Human: "Test this feature with 3 variants"
+
+  2. Evolution (before Cyrus):
+     - Creates experiment plan
+     - Writes: experiments/exp-123.json
+     - Contains: { "issue-A": {coding: "v2"}, "issue-B": {coding: "v3"}, ...
+   }
+
+  3. Orchestrator creates 3 sub-issues (A, B, C)
+
+  4. Cyrus runs issue A:
+     - Calls resolver.ts with context (issueId: "A")
+     - Resolver checks experiments/
+     - Returns coding-v2 for issue A
+
+  5. Cyrus runs issue B:
+     - Calls resolver.ts with context (issueId: "B")
+     - Resolver returns coding-v3 for issue B
+
+  6. Cyrus thinks it ran the same thing 3 times
+
+  7. Evolution compares results
+
+  What You're Not Thinking About?
+
+  I think the question is: How does the resolver know which experiment this 
+  issue belongs to?
+
+  Options:
+  1. Experiment config file - Resolver looks up issueId in a file
+  2. Issue metadata - Evolution puts variant info in the Linear issue itself
+  3. Labels - Issue has label "experiment:exp-123:variant-2"
+
+  Which feels right to you?
+
+> I think it should be a mix of both. So registry.ts has a definition at the
+ top called subroutines and that shape is fine. It's an object adjacent 
+effectively. As an object, a JavaScript object. That's fine because it's 
+very visible, it's very easy to see, it's very easy to update. And it's 
+basically saying prompt path, prompting of files. What I think should happen
+ is the evolution should change that file, it should load it, and then it 
+should change when it says prompt path, primary, etc. What it should be 
+doing is changing those things to different versions. Probably in even the 
+same path, I'm not sure, but basically we should have a primary output which
+ is those locations. And what it does is write different versions, maybe to 
+the same location just with a version at the end. And what it does is it 
+replaces it with what it wants to do as it's doing it. That way, we have a 
+very human readable structure and it's just changing the path according to 
+what it means to. But we have a path to the file, very easy to read, very 
+easy as to read the primary prompt that's being used. In theory, we could 
+look at any version of the prompt that's being used. But because it's going 
+to be running them, it's going to come up with new versions all the time. We
+ could easily look at the version, but really we're trying to get the system
+ to do it. But as we start, we have to be able to have visibility and 
+understand it. Do you agree? 
+
+⏺ Yes, I agree. This is much clearer.
+
+  The Structure
+
+  workflow.ts (same shape as registry.ts):
+  export const SUBROUTINES = {
+    coding: {
+      name: "coding",
+      promptPath: "prompts/10-coding.v2.md",  // Currently active version
+      description: "Implementation phase",
+    },
+    verify: {
+      name: "verify",
+      promptPath: "prompts/20-verify.md",
+      description: "Run tests",
+    },
+    git: {
+      name: "git",
+      promptPath: "prompts/30-git.md",
+      description: "Commit and PR",
+    },
+    summary: {
+      name: "summary",
+      promptPath: "prompts/40-summary.md",
+      singleTurn: true,
+      description: "Brief summary",
+    },
+  };
+
+  export const PROCEDURE = {
+    name: "develop-advanced",
+    subroutines: [
+      SUBROUTINES.coding,
+      SUBROUTINES.verify,
+      SUBROUTINES.git,
+      SUBROUTINES.summary,
+    ],
+  };
+
+  prompts/:
+  prompts/
+  ├── 10-coding.md        ← Original
+  ├── 10-coding.v1.md     ← Version 1
+  ├── 10-coding.v2.md     ← Version 2 (currently active)
+  ├── 20-verify.md
+  ├── 30-git.md
+  └── 40-summary.md
+
+  What You See
+
+  Look at workflow.ts → see promptPath: "prompts/10-coding.v2.md" → know
+  exactly what's running.
+
+  Open prompts/10-coding.v2.md → see the actual prompt.
+
+  Open prompts/10-coding.v1.md → see the previous version.
+
+  Diff them → see what changed.
+
+  What Evolution Does
+
+  1. Creates prompts/10-coding.v3.md with improvements
+  2. Updates workflow.ts: promptPath: "prompts/10-coding.v3.md"
+
+  That's it. Human readable. Easy to understand. Easy to track.
+
+  For A/B Testing
+
+  Evolution could:
+  - Create experiment variants by copying workflow.ts and pointing to
+  different versions
+  - Or modify the path dynamically at load time based on context
+
+  But the base structure stays simple and visible.
+
+  Is this the right direction?
+
+> But I'm actually saying the workflow is human created. Evolution changes 
+the variable before it's used, not change the file. The file remains static,
+ the file remains fixed. So if I was using that I would be using 
+10-coding.md, not v2. If it became v2 the contents of its files would become
+ v2. There's also a v2 source. The point being the latest version is always 
+the same files. I can easily look at what the latest version is as it's 
+continually being updated. It doesn't point at different files. You see what
+ I mean? But the separate files are there and the first line in the prompt 
+would be your second line first line describing it, second line saying what 
+version it is. See what I mean? Because then nothing changes. The file's 
+static, it's not dynamic. Evolution returns it changed. 
+
+⏺ NOW I understand.
+
+  The File is Static
+
+  workflow.ts - never changes:
+  promptPath: "prompts/10-coding.md"  // Always this. Never changes.
+
+  prompts/10-coding.md - always the "current" version:
+  <!-- Version: v3 -->
+  <!-- Description: Improved error handling based on failure analysis -->
+
+  # Coding Phase
+
+  ...prompt content...
+
+  The Version Sources
+
+  prompts/
+  ├── 10-coding.md        ← Active prompt (currently contains v3)
+  ├── 10-coding.v1.md     ← Version 1 source
+  ├── 10-coding.v2.md     ← Version 2 source
+  ├── 10-coding.v3.md     ← Version 3 source (same content as 10-coding.md
+  right now)
+  ├── 20-verify.md
+  └── ...
+
+  How Evolution Works
+
+  For normal updates:
+  1. Evolution creates 10-coding.v4.md
+  2. Evolution copies contents of v4.md → 10-coding.md
+  3. 10-coding.md header now says <!-- Version: v4 -->
+
+  For A/B testing:
+  Evolution intercepts at load time, returns different content:
+  - Issue A: returns contents of 10-coding.v2.md
+  - Issue B: returns contents of 10-coding.v3.md
+  - Issue C: returns contents of 10-coding.v4.md
+
+  The file path never changes. The content returned changes.
+
+  What You See
+
+  Open 10-coding.md → see current active prompt with version number in
+  header.
+
+  Open 10-coding.v2.md → see that specific version.
+
+  Diff them → see changes.
+
+  Nothing in workflow.ts ever changes. Evolution changes what gets returned
+  when that path is loaded.
+
+  Is this it?
+
+> Okay, I think you're mixing two things up. What is evolution? Evolution is
+ evolving the prompts over time. What that means is, if three prompts are 
+running and one is the base one, it loads the base one which is pointing at 
+the latest version, let's say 10 coding. When it runs the second one, it 
+alters the variable pointing at v2. Then when the third one runs, it alters 
+the variable pointing at v3. So, Cyrus always gets a direct reference to the
+ file it's supposed to run. Which is correct. It means it'll be in the 
+tracing, it'll be in the logging, it'll have the file that's got loaded 
+which means it's easy to track down and trace because of the file reference,
+ because of the path. But from a coding perspective, what we're doing is 
+we've got a fixed one so we're able to see from a fixed perspective. Now 
+when it believes it has something that's better, it would change the prompt.
+ You see what I mean? Two sides. Evolution is evolving it by doing tests or 
+making a change because it's decided the change is worth doing. The 
+evolution over time. So changes are changing variable. Running tests, that 
+sort of thing. Do you get what I'm talking about now? them. 
+
+⏺ Yes, now I understand the two separate things:
+
+  1. Running Experiments (A/B Testing)
+
+  Evolution modifies the variable before Cyrus runs:
+
+  - Run 1 (base): promptPath = "prompts/10-coding.md" → Cyrus loads this
+  file
+  - Run 2 (test): promptPath = "prompts/10-coding.v2.md" → Cyrus loads this
+  file
+  - Run 3 (test): promptPath = "prompts/10-coding.v3.md" → Cyrus loads this
+  file
+
+  Each is a real file path. Cyrus logs show exactly which file was loaded.
+  Traceable. Debuggable.
+
+  2. Evolving Over Time (Making Improvements)
+
+  Evolution determines v3 is better. Evolution updates the file content:
+
+  - Copies contents of 10-coding.v3.md → 10-coding.md
+  - The fixed path now contains the improved version
+  - Normal runs get the improvement automatically
+
+  From Our Code Perspective
+
+  workflow.ts says: promptPath = "prompts/10-coding.md"
+
+  Cyrus reads the variable → loads the file → logs the path
+
+  We don't modify the variable. We don't know about versions. We just load
+  what the variable says.
+
+  Evolution modifies the variable before we read it (for experiments).
+  Evolution modifies the file content (for permanent improvements).
+
+  The Structure
+
+  ~/.cyrus/workflows/develop-advanced/
+  ├── workflow.ts              ← Fixed definition
+  └── prompts/
+      ├── 10-coding.md         ← Current/latest (what normal runs use)
+      ├── 10-coding.v1.md      ← Version 1
+      ├── 10-coding.v2.md      ← Version 2
+      ├── 10-coding.v3.md      ← Version 3
+      └── ...
+
+  All real files. All traceable. Evolution controls which one gets used.
+
+  Is this correct now?
+
+> That's exactly right. The only difference is I would not put the prompts 
+and the versions in the same folder structure. That folder structure is 
+Cyrus's folder structure, this stuff. It goes in a different folder which is
+ managed by evolution. That's the point. Evolution is modifying things. We 
+shouldn't see them, we shouldn't know about them. I don't want Cyrus to see 
+them. If Cyrus can see the folders and see the prompts, he could potentially
+ fuck around. That's why it has to be a separate system. So it can load the 
+files. That means evolution could store all the versions somewhere else, 
+write them out to a file and then make them available when it needs to run. 
+You don't have to have access. We might take that direction if we find Cyrus
+ is cheating. If not, we'll write them somewhere else. So basically we've 
+got prompts and what I'd like is a separate folder called 'versions' and 
+that contains the prompt versions. You see what I mean? Because the bit 
+you're missing is there has to be a JSON file of what the versions are and 
+why we've made those decisions. That has to be stored somewhere as well. So 
+I believe there should be a folder called 'versions' and inside it a version
+ JSON and the version JSON might be structured into names with some ones. We
+ haven't got to that point. We don't have to worry about that yet. But 
+evolution will create that and manage that. Maybe somewhere else, but you 
+get the point. So that's the point. 
+
+⏺ Got it. Complete separation.
+
+  Cyrus's Domain
+
+  ~/.cyrus/workflows/develop-advanced/
+  ├── workflow.ts              ← Definition (fixed, human-created)
+  └── prompts/
+      ├── 10-coding.md         ← What Cyrus loads
+      ├── 20-verify.md
+      ├── 30-git.md
+      └── 40-summary.md
+
+  Cyrus sees ONLY this. Nothing else.
+
+  Evolution's Domain (Separate)
+
+  ~/.cyrus/evolution/develop-advanced/
+  ├── versions.json            ← Metadata: what versions exist, why changes
+  made
+  └── versions/
+      ├── 10-coding.v1.md
+      ├── 10-coding.v2.md
+      ├── 10-coding.v3.md
+      ├── 20-verify.v1.md
+      └── ...
+
+  Evolution:
+  - Stores all versions here
+  - Tracks reasoning in versions.json
+  - Writes TO workflows/.../prompts/ when updating
+  - Modifies variables at load time for experiments
+  - Cyrus never accesses this folder
+
+  The Separation
+
+  | Folder     | Owner          | Cyrus Access |
+  |------------|----------------|--------------|
+  | workflows/ | Human + Cyrus  | Yes          |
+  | evolution/ | Evolution only | No           |
+
+  Evolution writes INTO Cyrus's prompts folder. Cyrus doesn't know where it
+  came from.
+
+  If Cyrus starts cheating, Evolution could store versions completely
+  externally and just write to prompts/ at runtime.
+
+  Is this the right separation?
+
+> I believe that's the right separation. The only difference I would say is 
+'versions.json' belongs inside the 'versions' folder, not outside. Because 
+remember this is. Also we wouldn't have 'evolution' as the name. These are 
+workflows. They belong in the workflow folder. You see what I mean? It's 
+just another folder called 'versions' in the workflow folder alongside 
+'prompt'. Inside that folder is the 'versions.json'. There is no mention of 
+'evolution' anywhere. You see what I mean? The other thing when we build 
+evolution code, we'll have other ones in the root of the repo in the 
+workflow folder. And that's going to be managing what we're doing. You know,
+ tracing, tracking, understandings, etc. etc. We haven't got to that yet, so
+ we're not sure where it's going, but probably it will belong in the 
+workflow, similar to these. So the reason 'versions' is in the workflow 
+folder called 'develop advances' because these are evolutions of those 
+prompts for that one. They're contextual. Do you agree? 
+
+⏺ Yes, I agree. It's contextual to the workflow.
+
+  Final Structure
+
+  ~/.cyrus/workflows/develop-advanced/
+  ├── workflow.ts              ← Definition (fixed, human-created)
+  ├── prompts/                 ← What Cyrus loads
+  │   ├── 10-coding.md
+  │   ├── 20-verify.md
+  │   ├── 30-git.md
+  │   └── 40-summary.md
+  └── versions/                ← Version history for THIS workflow
+      ├── versions.json        ← Metadata: versions, reasoning
+      ├── 10-coding.v1.md
+      ├── 10-coding.v2.md
+      ├── 10-coding.v3.md
+      └── ...
+
+  Why This Makes Sense
+
+  - versions/ is specific to develop-advanced
+  - These are evolutions of THESE prompts
+  - Self-contained: everything for this workflow in one place
+  - No "evolution" naming anywhere
+  - Cyrus reads prompts/, ignores versions/
+  - Later, evolution tooling may add other files to manage tracing,
+  tracking, etc.
+
+  The workflow folder contains everything about that workflow - both what
+  runs (prompts) and its history (versions).
+
+> But remember the TS code, the one that's running, workflow TS has to load 
+and evolution has to be able to modify that. So there is going to be, 
+somehow, evolution has to modify that in real time. So there's obviously 
+going to be a function inside the workflow TS that runs and that will be 
+hooking into or somehow, see I mean connecting to versions or evolution. 
+Otherwise it cannot, in real time, switch the paths of our, what is it, 
+subroutine JSON that's inside it. Remember that's going to be loaded prior 
+to it loading, it's going to pass it to evolution, evolution will do shit 
+with it, pass it back and then it will go into Cyrus, is the idea. So as we 
+build evolution out, we'll just build a wrapper that goes inside the TS 
+file. See how I'm in? 
+
+⏺ Yes, I understand. workflow.ts isn't just static data - it has a function
+  that Evolution can hook into.
+
+  The Hook Point
+
+  // workflow.ts
+
+  const SUBROUTINES = {
+    coding: {
+      name: "coding",
+      promptPath: "prompts/10-coding.md",
+    },
+    verify: {
+      name: "verify",
+      promptPath: "prompts/20-verify.md",
+    },
+    // ...
+  };
+
+  const PROCEDURE = {
+    name: "develop-advanced",
+    subroutines: [
+      SUBROUTINES.coding,
+      SUBROUTINES.verify,
+      // ...
+    ],
+  };
+
+  // The hook - Evolution wraps this
+  export async function resolve(context) {
+    // For now: return as-is
+    // Later: Evolution modifies before returning
+    return PROCEDURE;
+  }
+
+  The Flow
+
+  1. Cyrus calls workflow.resolve(context)
+  2. resolve() passes PROCEDURE to Evolution
+  3. Evolution modifies paths based on experiment/version
+  4. Modified PROCEDURE returned to Cyrus
+  5. Cyrus loads files from the (possibly modified) paths
+
+  As We Build Evolution
+
+  The resolve() function grows:
+
+  export async function resolve(context) {
+    // Evolution hook - modify paths based on context
+    const modified = await evolution.prepare(PROCEDURE, context);
+    return modified;
+  }
+
+  Initially evolution.prepare is a passthrough. We build it out over time.
+
+  The workflow.ts file stays human-readable (you see the default paths), but
+   Evolution can modify what actually gets used at runtime.
+
+> Exactly. So the thing that matters is when this function gets called, when
+ the TS function gets called, is there enough information in it for it to 
+understand why it's being called, what's running, etc, etc. Is there data 
+about prompt and activity and stage, etc, etc. Is there enough data coming 
+in? 
+
+⏺ That's the critical question. Let me think about what needs to be in the
+  context.
+
+  What Evolution Needs to Make Decisions
+
+  | Information      | Why Needed                                          |
+  |------------------|-----------------------------------------------------|
+  | Issue ID         | Which experiment is this issue in?                  |
+  | Worktree path    | Identify parallel runs                              |
+  | Subroutine name  | Which prompt is being loaded (coding, verify, etc.) |
+  | Subroutine index | What stage we're at                                 |
+  | Procedure name   | Which workflow                                      |
+  | Labels           | Might affect variant selection                      |
+  | Repository ID    | Repository-specific behavior                        |
+  | Session ID       | Tracking/logging                                    |
+
+  What Cyrus Has Available
+
+  From my earlier research, at the call sites Cyrus has:
+
+  - session.issueId
+  - session.workspace.path (worktree)
+  - session.metadata.procedure.procedureName
+  - session.metadata.procedure.currentSubroutineIndex
+  - session.metadata.procedure.subroutineHistory
+  - linearAgentActivitySessionId
+  - repository.id
+  - labels[]
+  - fullIssue (complete Linear issue)
+
+  The Context Interface
+
+  interface ResolveContext {
+    // Identity
+    issueId: string;
+    sessionId: string;
+    worktreePath: string;
+    repositoryId: string;
+
+    // Procedure state
+    procedureName: string;
+    subroutineIndex: number;
+    subroutineName: string;
+    subroutineHistory: SubroutineHistoryEntry[];
+
+    // Metadata
+    labels: string[];
+
+    // The issue itself (if Evolution needs more)
+    issue?: LinearIssue;
+  }
+
+  Is This Enough?
+
+  I believe yes - Evolution can:
+  1. Look up experiments by issueId
+  2. Identify parallel runs by worktreePath
+  3. Know which prompt to modify by subroutineName
+  4. Track history via subroutineHistory
+  5. Make label-based decisions
+
+  Is there anything missing that you think Evolution would need?
+
+> A lot of this is the same. 'issue ID' and 'rucktree path' are both 
+identical. 'subroutine name', 'subroutine index'. Again, why 'subroutine'? 
+Is it coming in as a subroutine? In which case 'workflow' is incorrect. If 
+you're saying there's a subroutine calling this, I thought 'registry TS' 
+contained everything. If it doesn't, we're working in completely the wrong 
+place. But please confirm that first. 
+
+⏺ You're right, let me clarify.
+
+  Looking at registry.ts:
+  - SUBROUTINES = individual steps (coding, verify, git, summary)
+  - PROCEDURES = the sequence of subroutines
+
+  So when workflow.ts resolve() is called, it's loading the entire procedure
+   - not a single subroutine. The subroutine stepping happens AFTER.
+
+  When resolve() Gets Called
+
+  It's called ONCE at the start to get the procedure definition. Not
+  per-subroutine.
+
+  So the context at that point is simpler:
+
+  interface ResolveContext {
+    issueId: string;           // Which issue
+    labels: string[];          // Issue labels
+    repositoryId: string;      // Which repo
+  }
+
+  No subroutine info yet - we're loading the whole procedure definition.
+
+  What resolve() Returns
+
+  The full procedure with all subroutines and their paths:
+
+  {
+    name: "develop-advanced",
+    subroutines: [
+      { name: "coding", promptPath: "prompts/10-coding.md", ... },
+      { name: "verify", promptPath: "prompts/20-verify.md", ... },
+      ...
+    ]
+  }
+
+  Evolution modifies the paths in this structure before returning it. Then
+  Cyrus steps through the subroutines using those paths.
+
+  Is this the right understanding? One call to resolve(), returns the whole
+  procedure, then Cyrus handles the rest?
+
+> Yeah, that was my understanding. Evolution, it gets called, Evolution 
+knows what it's doing. If there's three versions, it's going to see it being
+ called for the first one, the second one, and the third one. The idea is 
+that we might have to do a hook prior to this, but again, this is a 
+different part, which is we might find that we need to provide more 
+information into linear, etc. But again, we don't need to know that yet. 
+We're trying to restructure this correctly. So yes, we want it to resolve 
+once, which allows it with our idea, Evolution can modify the paths inside 
+the JSON that gets returned. It's absolutely perfect. It's very light and 
+very elegant, exactly what we're after. remember logging will continue as 
+normal so evolution is going to look at the log files for the issue number 
+to decide is there anything improved we're going to be using external tools 
+to analyze these things and make some decisions and then deliberately 
+creating tests now remember that we can actually write test codes we can 
+actually go okay evolution let's create some tests to prove some things and 
+it will directly use linear issues and use the whole cyrus system from a 
+completely different perspective which is writing an issue to test code to 
+create multiple versions to test assumptions to rewrite new code so we can 
+actually use cyrus to build cyrus by using issues up front which is a whole 
+other thing but again this is where we're heading 
+
+⏺ Yes, I understand the complete picture now.
+
+  What We're Building
+
+  1. workflow.ts with resolve() hook - Evolution modifies paths in the
+  returned JSON
+  2. prompts/ - The prompt files Cyrus loads
+  3. versions/ - Where Evolution stores version history
+
+  Light. Elegant. One hook point.
+
+  How Evolution Works (Separate System)
+
+  1. Analyzes logs - Cyrus logs everything, Evolution reads logs for each
+  issue
+  2. Uses external tools - DSPy, etc. to analyze and make decisions
+  3. Creates test issues - Writes Linear issues to test assumptions
+  4. Runs through Cyrus - Those test issues execute normally
+  5. Compares results - Multiple versions, analyze which is better
+  6. Updates prompts - Writes improved versions, modifies resolve() behavior
+
+  The Self-Improving Loop
+
+  Cyrus runs workflows
+          ↓
+  Logs generated
+          ↓
+  Evolution analyzes logs
+          ↓
+  Evolution creates test issues (via Linear)
+          ↓
+  Cyrus runs tests (multiple versions)
+          ↓
+  Evolution compares results
+          ↓
+  Evolution updates prompts
+          ↓
+  Cyrus runs with improved prompts
+          ↓
+  Repeat
+
+  Cyrus builds Cyrus - Evolution uses the same system (Linear issues →
+  Cyrus) to test and improve itself.
+
+  Everything flows through normal Cyrus execution. Evolution is external -
+  observes, analyzes, creates issues, updates prompts. Cyrus is oblivious.

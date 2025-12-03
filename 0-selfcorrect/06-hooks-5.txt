@@ -1,0 +1,3145 @@
+
+ ▐▛███▜▌   Claude Code v2.0.55
+▝▜█████▛▘  Opus 4.5 · Claude API
+  ▘▘ ▝▝    ~/.cyrus/repos/cyrus/0-selfcorrect
+
+> /clear 
+  ⎿  (no content)
+
+> read @06-hooks-4.txt 
+  ⎿  Read 06-hooks-4.txt (1967 lines)
+
+⏺ I've read the full context from 06-hooks-4.txt. You were interrupted while
+   explaining a key architectural point:
+
+  The separation you're making:
+
+  repo: evolve/
+  ├── experiments/
+  │   └── deep-development/          ← A named experiment
+  │       ├── workflow.json          ← For Cyrus to execute
+  │       └── prompts/               ← For Cyrus to execute
+  │           ├── research.md
+  │           ├── planning.md
+  │           └── ...
+  │
+  ├── graders/                       ← For Evolve itself (separate)
+  │   ├── plan-quality.md
+  │   ├── code-quality.md
+  │   └── outcome.md
+  │
+  └── evolution/                     ← Evolve's logic (separate)
+      ├── evaluator.ts
+      └── mutator.ts
+
+  The distinction:
+  - experiments/*/workflow.json + prompts/ = What Cyrus reads and executes
+  - graders/ + evolution/ = What Evolve uses to improve those experiments
+
+  Cyrus sees only its execution artifacts. Evolve sees both - it reads the
+  execution artifacts to know what was run, reads graders to evaluate, then
+  writes improved versions of the execution artifacts.
+
+  Is this the separation you're describing? Or is the structure different?
+
+> Again, incorrect. What I'm saying is we have one version of evolve. We 
+can't mix them together. We have exactly the same problem we have with 
+Cyrus. We have with this. If we let it grade itself, it will cheat and lie. 
+If we let it grade its graders, it will cheat and lie. These are separate 
+processes running. So we have a separate process that runs in its own code 
+base. All of this stuff's being executed by Cyrus. This is all easy. I mean,
+ Cyrus is a set of prompts that's running. We're using Cyrus itself as 
+dogfooding. We don't want to have to create another system. Cyrus is already
+ that system. So we're going to have a grading sequence of prompts that 
+grades the graders. We're going to have a, you see, I mean, these are just 
+different workflows that we're running. You see, I mean, it's dogfooding. 
+It's one inside the other. It's inside out like an onion with many layers, 
+but it's the same onion. 
+
+⏺ Now I get it.
+
+  It's all Cyrus. Different workflows, separate sessions.
+
+  Session 1: Cyrus runs "task workflow"
+      → outputs code/results
+
+  Session 2: Cyrus runs "grading workflow"
+      → reads session 1 outputs
+      → outputs grades
+      → CAN'T modify session 1
+
+  Session 3: Cyrus runs "meta-grading workflow"
+      → reads session 2 outputs
+      → outputs grade-of-grades
+      → CAN'T modify sessions 1 or 2
+
+  Session 4: Cyrus runs "evolution workflow"
+      → reads all grades
+      → outputs new prompts/workflows
+      → CAN'T modify previous sessions
+
+  The separation is process-level, not codebase-level.
+
+  Each layer is just Cyrus running a different set of prompts. The "can't
+  cheat" guarantee comes from them being separate sessions - session 2 can
+  only read session 1's outputs, not modify its own grading criteria
+  mid-run.
+
+  Same onion. Same engine. Different layers = different workflow definitions
+   that Cyrus executes in isolation.
+
+  The "evolve package" isn't new code - it's just more workflows for Cyrus
+  to run. Grading workflows. Meta-grading workflows. Evolution workflows.
+
+  Is that the model?
+
+> Our custom code of evolve leverages. So it's still a separate, because we 
+have to write a ton of code, we cannot modify Cyrus that much. So what we're
+ going to do is write a different package for Cyrus. And that's the evolve 
+thing. So evolve is a separate package, copying all of the structure and 
+systems and exactly hooking into Cyrus. So this is an extension of Cyrus. 
+It's not Cyrus itself, however, because we're not pushing this back to 
+Cyrus. This isn't their code, this is ours, but we're leveraging Cyrus. So 
+it moves forward, we still pull from the original code base. So as they 
+update, we update, but we're extending it. That's the purpose of what we're 
+attempting to do. 
+
+⏺ Got it. Now I understand the full picture:
+
+  cyrus/                              ← Upstream (pull updates)
+  ├── packages/
+  │   ├── core/                       ← Don't modify
+  │   ├── edge-worker/                ← Minimal hooks added (the 25 lines)
+  │   ├── claude-runner/              ← Don't modify
+  │   │
+  │   └── evolution/                  ← OUR PACKAGE (extends Cyrus)
+  │       ├── src/
+  │       │   ├── orchestrator.ts     ← Runs separate sessions per layer
+  │       │   ├── layer-runner.ts     ← Controls session isolation
+  │       │   └── ...
+  │       ├── workflows/
+  │       │   ├── task/               ← Task execution workflows
+  │       │   ├── grading/            ← Grading workflows
+  │       │   ├── meta-grading/       ← Grade-the-graders workflows
+  │       │   └── evolution/          ← Prompt improvement workflows
+  │       └── package.json            ← Depends on cyrus packages
+
+  The relationship:
+  - packages/evolution imports from packages/edge-worker,
+  packages/claude-runner, etc.
+  - It's a Cyrus consumer, not a fork
+  - Upstream Cyrus updates flow through
+  - Our orchestration code controls the layer separation (separate sessions)
+  - Our workflows/prompts are what gets evolved
+
+  The minimal Cyrus changes are just the hooks to let our package plug in -
+  then everything else is in packages/evolution.
+
+  Should I update the plan document to reflect this structure?
+
+> Okay. I'm unsure. I mean, I'm just going to assume that your source 
+orchestrator layer runner, these are guesses, I'm assuming. The point is, 
+yes, we're going to have source and the source is going to be very similar 
+to the elements. We use the same style, the same way of writing, the same 
+way of doing testing. So we can extend and add our separate features. The 
+set of features we're after is that the evolutionary package can look at the
+ logs inside the repo for the workflow that's just run. So every time 
+something runs, we're triggering evolution for it to analyze what happened 
+and grade things. And so the part is that it's a separate set of packages, a
+ separate set of code that's doing any extra set of functions that Cyrus 
+doesn't do. But it's basically the validation and approval of things, making
+ sure things are right, because we need to evolve them. And that means we 
+might create new orchestration layers. And that's a conversation with Cyrus 
+going, this is what we'd like to build. This is what we want to do. And we 
+build a whole new workflow, whole new way of doing things. And then we run 
+some tests, make sure it's working, then we run it. But we want to be able 
+to evolve those quite quickly. So the idea is that we're going to be writing
+ these code bases and improving the system by using Cyrus itself, by using 
+the orchestration. So we're improving ourselves, if that makes sense. So I'm
+ going to assume your source packages are guesses. But if they are guesses, 
+then yes, it's a brand new set of features and functions that's running 
+inside the evolution package. Evolution package will trigger based on 
+different assumptions, either manually when we're building things, it could 
+come from Cyrus that we're basically we want to do this. Now that means that
+ the extra hooks and extra things we're doing were able to evolve itself. So
+ remember, it would be looking at Cyrus inside the repo and evolving, for 
+example, the evolution package. So when Cyrus is looking at the code base, 
+it's seeing everything when it's coding and fixing it and adding features. 
+But when it's running, that's the deployed Cyrus where the separation of 
+concerns, it cannot see everything. When it's running, it's not running 
+necessarily on cybers, it's running on other projects. I hope that makes 
+sense, does that make sense? 
+
+⏺ Yes, I understand now. Two contexts:
+
+  Context 1: Development (Cyrus working ON the Cyrus repo)
+  Cyrus sees everything:
+  ├── packages/evolution/src/...     ← Can read, modify, improve
+  ├── packages/edge-worker/...       ← Can read, modify
+  ├── workflows/...                  ← Can create new ones
+  └── All code is visible
+
+  This is where we improve the evolution package itself.
+  Cyrus improves Cyrus. Dogfooding.
+
+  Context 2: Production (Cyrus deployed on OTHER repos)
+  Cyrus runs with evolution, but:
+  ├── Customer repo code             ← Can see
+  ├── Logs from this run             ← Evolution can read
+  ├── Workflow outputs               ← Evolution can grade
+  └── Evolution internals            ← CANNOT modify during run
+
+  Separation of concerns applies.
+  Can only see outputs, not its own machinery.
+
+  The loop:
+  1. Evolution package triggers on runs → grades outputs → suggests
+  improvements
+  2. Those improvements become tasks for Cyrus-as-developer
+  3. Cyrus-as-developer (on the Cyrus repo) implements the improvements
+  4. New version deploys → better evolution → better grading → better
+  suggestions
+
+  The evolution package code structure - yes, those were guesses. The actual
+   functions and features will emerge as we build. But the principle is:
+  same patterns as Cyrus, extends Cyrus, uses Cyrus to improve itself.
+
+  Is that the model?
+
+> Yeah, this is the correct idea. So what we want to be able to do is 
+correctly find out how we're going to do this. How are we hooking in? So we 
+know we're creating a new product for Evolution. So we know that that is a 
+new package. We have to plan that out. But first we have to plan how do we 
+hook into it. We've been discussing it so far, but now you have a much 
+clearer understanding of what we're doing. Let's understand how we're going 
+to hook in, where we're going to hook in, how we're actually going to do 
+this and write a plan document, not a spec document. So this is a research 
+and what we now want to do is you can write out the later research document 
+we've been working on. But basically we're about to start the planning 
+stage, but we have to get all this research out of us. Let's do a research 
+document first, then we'll go from there. 
+
+⏺ Let me first see what research documents exist to understand the naming
+  convention:
+
+⏺ Search(pattern: "research/*.md", path: "~/.cyrus/repos/cyrus/0-selfcorrect")
+  ⎿  Found 15 files (ctrl+o to expand)
+
+⏺ Read(research/06-hook-points-analysis.md)
+  ⎿  Read 655 lines
+
+⏺ Good - I can see 06 is focused on technical hook points. Now I'll write 07
+   that captures our broader architectural understanding from this
+  conversation:
+
+⏺ Write(research/07-evolution-architecture-research.md)
+  ⎿  Wrote 511 lines to research/07-evolution-architecture-research.md     
+     # Evolution Architecture Research: How We Hook Into Cyrus
+     **Document Purpose:** Capture the architectural understanding from
+     design discussions about how the Evolution package extends Cyrus
+     without forking it.
+     **Created:** 2025-12-01
+     **Status:** Research - ready for planning
+     ---
+     ## 1. Core Principle: Extension, Not Fork
+     … +501 lines (ctrl+o to expand)
+
+⏺ Written research/07-evolution-architecture-research.md. It captures:
+
+  Core concepts:
+  1. Extension not fork - Evolution package depends on Cyrus, doesn't modify
+   core
+  2. Two contexts - Development (Cyrus sees everything) vs Production
+  (separation applies)
+  3. Dogfooding - Grading, meta-grading, evolution are all Cyrus workflows
+  4. Session isolation prevents cheating
+
+  What Evolution controls:
+  - workflow.json (sequence, steps, parameters)
+  - prompts/*.md (actual instructions)
+  - graders (evaluation criteria)
+
+  Hook points needed:
+  - Prompt path override (~10 lines)
+  - Per-subroutine model (~15 lines)
+  - Metrics collection (~50 lines)
+
+  Open questions identified for planning phase:
+  - Package structure
+  - Workflow storage location
+  - Trigger mechanism
+  - First workflow to evolve
+  - Grading criteria
+
+  The document is about 400 lines. Want me to read it back to you, or shall
+  we move to planning? Also - did I miss anything from our conversation that
+   should be captured?
+
+> Okay, there's a slight, a few subtle things that need to be talked about. 
+So you're talking about the grading system, why graders need graders. You're
+ saying it so they can't cheat. No, they can't cheat is because we're 
+running them as separate sessions, as you've described earlier. So the 
+grading process is a separate process that evolution is running. So the 
+system runs. What we do is we grade the performance of it that's slightly 
+subjective, subtly objective. But if we simply stopped there, we wouldn't 
+know if the graders were any good. So it's nothing to do with cheating. We 
+just have a completely different process that improves the graders. We look 
+at the quality of the output the grader is saying, and we evaluate, has that
+ graded correctly? Should the graders be improved? Should they add more 
+detail, more nuance? You see what I mean? Because if we don't do that, we 
+have to evolve the graders the same way as we evolve the system, is the 
+point. But if we don't grade the quality of the grading, we end up not 
+improving it. You see what I mean? So we have to, hence why it's three 
+levels, not two, but it's just a separate process. There's nothing bad about
+ it. The other one is going back a bit, you're talking about the workflow 
+4.2 workflow config. What's wrong about it is we have to start from what 
+already works. So we're using what exists in the system. So you're doing 
+research plan, validate plan, implement. That's wrong because that is not 
+improving the system. So we have to start. How would we describe the current
+ plan, the current system? So the very first workflow we would do is 
+duplicating the current system as it works. Because then what we're doing is
+ we know how it functions and then we can improve the current system. How we
+ improve the current system is when it starts planning, I'm actually saying 
+the very first thing we're going to do is improve the documentation of the 
+system itself so that when planning happens, it's better. But how we do that
+ is we improve the agents. So what we have to do is develop the agents. So 
+we create a set of agents, each agent is specialist in the particular 
+subject it's doing. So it might be, let's imagine it was our database. For 
+example, we create an agent to do with Postgres. And if we were using 
+Postgres, the node, then it would understand and it would go and research 
+and document how the code is created for Postgres, what commands work, how 
+we're using it. And it's writing documentation into a docs folder that the 
+planning, when it gets to that point uses. So we want to create agents that 
+create code that actually do documentation. So the very first step is we're 
+going to go, let's create agents that improve the system. And then that goes
+ into a flow. So the agents run first. If they already have collected the 
+data, they're just checking the dates on the information. If the dates are 
+rolled, it will just reach and recreate. So the argument is, you know, why 
+are we doing it? So logically, we have to say what the purpose is. So the 
+evolutionary system would go, what we're trying to do is evolve the quality 
+of the documentation, with the assumption that when the code runs, it will 
+do better planning, because it's actually using specific information, 
+doesn't have to guess, it doesn't hallucinate, it has the right information.
+ That's the assumption. So the evolutionary system has stage one evolution. 
+This is what we're trying. This is the proposition of what we're trying to 
+improve. It then uses Cyrus to write agents. The planning, sorry, the 
+evaluation of it looks at it and goes, did it create documentation that's 
+good? You see what I mean? So we are evolving the agents. Then it moves 
+forward and we start actually executing the system. Let's say the next thing
+ we're evolving was the planning process. So now we've got two things that 
+are evolving. The agents, the right content, and now the planning system. We
+ have two things we're now evolving. And the point is, as we move forward, 
+we keep adding layers to what can be evolved. So we're able to look at it 
+and say, it's interesting that the agent is good, but it's missing some 
+stuff. So the agents evolve and become better agents that write better 
+documentation. So next time the system runs, it runs, it calls the agents, 
+the agents do the bits that were missing. They don't update, the 
+documentation gets better, the planning stage takes place. We're then able 
+to go, did the planning stage, is the planning stage better? Because of the 
+quality of the agents is better. You see what I mean? So it's not a case of 
+going, we're trying to involve one thing. We're actually saying, as we add 
+layer upon layer upon layer, we're adding more and more pieces to the 
+system. We're looking at what it's trying to evolve. But it has to have 
+assumptions first. Because these are, I'm trying to evolve an agent. You 
+can't evolve an agent unless you know what it is you're attempting to do. 
+Now it's definitely possible that you have an agent being updated for 
+improvement. And then you have another one updating the agent for a 
+completely different thing. I believe that both belongs inside the first 
+one. You're trying to improve the agent. You just have two suppositions now 
+or two propositions. You get what I'm saying? This has to be considered. 
+From a simplicity perspective, does it make sense that, for example, agents 
+being upgraded for two different things? I can see the problem of we're 
+achieving one goal and the second goal undermining the first goal. So we 
+have to have simplicity. So some of the stuff would be we shouldn't upgrade 
+an agent because of one idea, then override it with a second. What we should
+ do is improve the first idea. So we basically say we want to improve the 
+agent. So we take the evolution of the agent and we improve the supposition.
+ Okay, we already have planning code, so we add to it. Agents should improve
+ planning. Plus, they should structure it in JSON format or in an indexable 
+way where the AI can read it. There's the second version. So you take the 
+first one and you improve its goal. See what I mean? Not just the actual 
+agent. That way you don't have one override and the other. It's just how 
+agents evolve. You see the point? Now, remember, this is agents for 
+documentation. Not agents across the whole board. They're all done for 
+different reasons. The reason we want to use agents is because then we're 
+calling them. We could just as easily use a command. The difference is an 
+agent contains its own context. So therefore, it gets called without losing 
+context. So the primary orchestrator gets back summary information when 
+used. Go find information on X. It doesn't read the documentation. The agent
+ reads the documentation. So the agent is partly creating the documentation,
+ collecting the documentation, and returning information about its 
+particular specialty. That is what improves the system. See what I mean? 
+
+⏺ I understand now. Let me capture these key clarifications:
+
+  1. Graders aren't about cheating - They're about evolution. We grade
+  outputs, then we grade the graders so we can IMPROVE them. Everything
+  evolves.
+
+  2. Start from what exists - First workflow replicates current Cyrus, then
+  improve from there.
+
+  3. The evolution strategy:
+  Step 1: Create specialist AGENTS that document the codebase
+          (Postgres agent, Auth agent, etc.)
+             ↓
+          Better documentation
+             ↓
+  Step 2: Planning uses that documentation
+             ↓
+          Better plans (no hallucination, specific info)
+             ↓
+  Step 3: Implementation uses better plans
+             ↓
+          Better code
+
+  4. Why agents, not commands:
+  - Agents have their own context window
+  - Agent reads all the docs, returns SUMMARY to orchestrator
+  - Orchestrator context stays clean
+  - Specialist agents do deep dives
+
+  5. Layered evolution with propositions:
+  Evolution 1: "Better docs → better planning" (hypothesis)
+     └── Evolve documentation agents
+
+  Evolution 2: "Better planning → better code" (hypothesis)
+     └── Evolve planning process
+
+  Evolution 3: ... add more layers as we go
+
+  6. Don't let evolutions conflict:
+  - If agent has two improvement goals, COMBINE them
+  - Evolve the proposition, not just the agent
+  - "Improve agent for X" + "Improve for Y" = "Improve for X+Y"
+
+  Let me update the research document with these corrections:
+
+⏺ Update(research/07-evolution-architecture-research.md)
+  ⎿  Updated research/07-evolution-architecture-research.md with 14        
+     additions and 5 removals
+       202    
+       203    ### 5.1 Why Graders Need Graders
+       204    
+       205 -  If we let the system grade itself, it can cheat:
+       206 -  - Claim everything is good
+       207 -  - Learn to game the metrics
+       208 -  - Ignore edge cases
+       205 +  Grading is about **evolution**, not preventing cheating.
+       206    
+       207 -  Solution: **Separate sessions that can't modify each 
+           - other**
+       207 +  We grade the task output to know if it's good. But if we 
+           + stop there:
+       208 +  - We can't improve the graders
+       209 +  - We don't know if grading criteria are correct
+       210 +  - Graders might miss important aspects
+       211    
+       212 +  Solution: **Grade the graders so we can evolve them too**
+       213 +  
+       214 +  Everything in the system needs to evolve:
+       215 +  - Task execution → graded → evolve task prompts
+       216 +  - Grading → meta-graded → evolve grader prompts
+       217 +  - Meta-grading → could go further if needed
+       218 +  
+       219 +  The separate sessions ensure isolation, but the PURPOSE is 
+           + evolution at every level.
+       220 +  
+       221    ### 5.2 Grading Hierarchy
+       222    
+       223    ```
+
+⏺ Update(research/07-evolution-architecture-research.md)
+  ⎿  Updated research/07-evolution-architecture-research.md with 18        
+     additions and 19 removals
+       124    
+       125    ### 4.2 Workflow Config (workflow.json)
+       126    
+       127 -  Controls the flow of execution:
+       127 +  **Critical: Start from what exists.** The first workflow 
+           + must replicate the CURRENT Cyrus system, not invent 
+           + something new. Then we improve from there.
+       128    
+       129 +  Current Cyrus workflow (what we replicate first):
+       130    ```json
+       131    {
+       132 -    "name": "deep-development",
+       132 +    "name": "full-development",
+       133      "version": "1.0.0",
+       134 +    "description": "Replicates current Cyrus full-development
+           +  procedure",
+       135      "steps": [
+       136        {
+       137 -        "id": "research",
+       138 -        "prompt": "prompts/research.md",
+       139 -        "description": "Explore codebase and document 
+           - patterns",
+       140 -        "outputs": ["docs/patterns.md"]
+       137 +        "id": "coding-activity",
+       138 +        "prompt": "subroutines/coding-activity.md",
+       139 +        "description": "Implement the requested changes"
+       140        },
+       141        {
+       142 -        "id": "plan",
+       143 -        "prompt": "prompts/planning.md",
+       144 -        "description": "Create implementation plan from 
+           - research",
+       145 -        "inputs": ["docs/patterns.md"],
+       146 -        "outputs": ["plan.md"]
+       142 +        "id": "verifications",
+       143 +        "prompt": "subroutines/verifications.md",
+       144 +        "description": "Run tests, linting, type checking"
+       145        },
+       146        {
+       147 -        "id": "validate-plan",
+       148 -        "type": "checkpoint",
+       149 -        "requiresApproval": true,
+       150 -        "description": "Human validates plan before 
+           - implementation"
+       147 +        "id": "git-gh",
+       148 +        "prompt": "subroutines/git-gh.md",
+       149 +        "description": "Commit and create PR"
+       150        },
+       151        {
+       152 -        "id": "implement",
+       153 -        "prompt": "prompts/implement.md",
+       154 -        "iterate": true,
+       155 -        "maxIterations": 5
+       152 +        "id": "concise-summary",
+       153 +        "prompt": "subroutines/concise-summary.md",
+       154 +        "description": "Summarize what was done"
+       155        }
+       156      ]
+       157    }
+       158    ```
+       159    
+       160 +  Then we evolve by adding layers (see section 5.4).
+       161 +  
+       162    ### 4.3 Prompt Files (prompts/*.md)
+       163    
+       164    Each step references a prompt file that Evolution can 
+             modify:
+
+⏺ Now let me add the section about layered evolution with propositions and
+  specialist agents:
+
+⏺ Update(research/07-evolution-architecture-research.md)
+  ⎿  Updated research/07-evolution-architecture-research.md with 143       
+     additions and 1 removal
+       250    
+       251    Each is a separate Cyrus session with its own prompts.
+       252    
+       253 +  ### 5.4 Layered Evolution Strategy
+       254 +  
+       255 +  **We don't evolve everything at once.** We add layers 
+           + incrementally:
+       256 +  
+       257 +  ```
+       258 +  Layer 1: Documentation Agents
+       259 +           ├── Hypothesis: "Better docs → better planning"
+       260 +           ├── Create specialist agents (Postgres, Auth, 
+           + etc.)
+       261 +           ├── Agents research & document the codebase
+       262 +           └── Evolve agents until docs are good
+       263 +  
+       264 +  Layer 2: Planning Process
+       265 +           ├── Hypothesis: "Better planning → better code"
+       266 +           ├── Planning uses docs from Layer 1
+       267 +           ├── Evolve planning prompts
+       268 +           └── Grading checks plan quality
+       269 +  
+       270 +  Layer 3: Implementation
+       271 +           ├── Hypothesis: "Plans + docs → fewer errors"
+       272 +           ├── Implementation uses docs + plans
+       273 +           └── Evolve implementation prompts
+       274 +  
+       275 +  Layer 4: ... add more as we go
+       276 +  ```
+       277 +  
+       278 +  Each layer builds on previous layers. When agents improve, 
+           + planning automatically benefits.
+       279 +  
+       280 +  ### 5.5 Evolution with Propositions
+       281 +  
+       282 +  Every evolution needs a clear **proposition** (hypothesis):
+       283 +  
+       284 +  ```
+       285 +  Proposition 1.0:
+       286 +    "Creating specialist documentation agents will improve 
+           + planning"
+       287 +  
+       288 +  Proposition 1.1 (evolved):
+       289 +    "Creating specialist documentation agents will improve 
+           + planning,
+       290 +     AND the docs should be structured in JSON/indexable 
+           + format
+       291 +     so AI can query specific information"
+       292 +  ```
+       293 +  
+       294 +  **Evolving propositions, not just agents:**
+       295 +  - Don't have two evolutions override each other
+       296 +  - If you want to improve agent for reason X and reason Y
+       297 +  - Combine: evolve the proposition to include both goals
+       298 +  - Then evolve the agent to meet the combined proposition
+       299 +  
+       300 +  This prevents conflicts where one improvement undoes 
+           + another.
+       301 +  
+       302    ---
+       303    
+       304 -  ## 6. Triggering Evolution
+       304 +  ## 6. Specialist Agents
+       305    
+       306 +  ### 6.1 Why Agents, Not Commands
+       307 +  
+       308 +  | Aspect | Command | Agent |
+       309 +  |--------|---------|-------|
+       310 +  | Context | Shares orchestrator context | Has its own 
+           + context window |
+       311 +  | Depth | Limited by context budget | Can read extensive 
+           + docs |
+       312 +  | Return | Full output to orchestrator | Summary only |
+       313 +  | Specialty | General purpose | Domain-specific |
+       314 +  
+       315 +  **The key insight:** Agents don't pollute the 
+           + orchestrator's context.
+       316 +  
+       317 +  ```
+       318 +  Orchestrator: "I need info about our Postgres patterns"
+       319 +      │
+       320 +      ├── Command approach (bad):
+       321 +      │   - Reads all Postgres docs into orchestrator context
+       322 +      │   - Context fills up
+       323 +      │   - Less room for actual planning
+       324 +      │
+       325 +      └── Agent approach (good):
+       326 +          - Postgres agent has its own context
+       327 +          - Reads all docs, code, patterns
+       328 +          - Returns 500-word summary to orchestrator
+       329 +          - Orchestrator context stays clean
+       330 +  ```
+       331 +  
+       332 +  ### 6.2 What Specialist Agents Do
+       333 +  
+       334 +  Each agent is responsible for:
+       335 +  1. **Researching** - Reading docs, code, external resources
+       336 +  2. **Documenting** - Writing to docs folder
+       337 +  3. **Updating** - Checking if docs are stale, refreshing
+       338 +  4. **Responding** - Answering queries about its domain
+       339 +  
+       340 +  Example agents:
+       341 +  ```
+       342 +  agents/
+       343 +  ├── postgres/           ← Database patterns, queries, 
+           + schema
+       344 +  ├── auth/               ← Authentication flow, JWT, 
+           + sessions
+       345 +  ├── api/                ← REST endpoints, validation
+       346 +  ├── testing/            ← Test patterns, fixtures, mocks
+       347 +  └── deployment/         ← CI/CD, Docker, environments
+       348 +  ```
+       349 +  
+       350 +  ### 6.3 Agent Lifecycle
+       351 +  
+       352 +  ```
+       353 +  Task starts
+       354 +      │
+       355 +      ▼
+       356 +  Orchestrator calls specialist agents
+       357 +      │
+       358 +      ├── Agent checks: Is my documentation current?
+       359 +      │   ├── Yes → Return summary from cached docs
+       360 +      │   └── No → Research, update docs, return summary
+       361 +      │
+       362 +      ▼
+       363 +  Orchestrator receives summaries (small context)
+       364 +      │
+       365 +      ▼
+       366 +  Planning uses summaries + can query agents for details
+       367 +      │
+       368 +      ▼
+       369 +  Implementation proceeds with accurate information
+       370 +  ```
+       371 +  
+       372 +  ### 6.4 Evolving Agents
+       373 +  
+       374 +  Agents themselves evolve:
+       375 +  
+       376 +  ```
+       377 +  Evolution observes:
+       378 +    "Agent returned info about Postgres queries,
+       379 +     but the code failed because it used wrong connection 
+           + pooling"
+       380 +  
+       381 +  Evolution hypothesis:
+       382 +    "Agent needs to document connection pooling patterns"
+       383 +  
+       384 +  Evolution action:
+       385 +    Update agent prompt to include connection pooling 
+           + research
+       386 +  
+       387 +  Next run:
+       388 +    Agent documents connection pooling
+       389 +    Planning has better info
+       390 +    Code works
+       391 +  ```
+       392 +  
+       393 +  The evolution system improves agents just like it improves 
+           + any other prompt.
+       394 +  
+       395 +  ---
+       396 +  
+       397 +  ## 7. Triggering Evolution
+       398 +  
+       399    ### 6.1 Manual Triggers (Development Phase)
+       400    
+       401    When building and testing:
+
+⏺ Update(research/07-evolution-architecture-research.md)
+  ⎿  Updated research/07-evolution-architecture-research.md with 1 addition
+     and 1 removal
+
+       396    
+       397    ## 7. Triggering Evolution
+       398    
+       399 -  ### 6.1 Manual Triggers (Development Phase)
+       399 +  ### 7.1 Manual Triggers (Development Phase)
+       400    
+       401    When building and testing:
+       402    - Run commands manually to build knowledge base
+
+⏺ Update(research/07-evolution-architecture-research.md)
+  ⎿  Updated research/07-evolution-architecture-research.md with 1 addition
+     and 1 removal
+
+       404    - Manually trigger evolution to improve prompts
+       405    - Human review at checkpoints
+       406    
+       407 -  ### 6.2 Automatic Triggers (Production Phase)
+       407 +  ### 7.2 Automatic Triggers (Production Phase)
+       408    
+       409    After every Cyrus run:
+       410    1. Evolution reads logs from the run
+
+⏺ Update(research/07-evolution-architecture-research.md)
+  ⎿  Updated research/07-evolution-architecture-research.md with 1 addition
+     and 1 removal
+
+       413    4. Triggers evolution workflow if grades indicate problems
+       414    5. Writes improved prompts/workflows
+       415    
+       416 -  ### 6.3 The Improvement Loop
+       416 +  ### 7.3 The Improvement Loop
+       417    
+       418    ```
+       419    ┌──────────────────────────────────────────────────────────
+             ───┐
+
+⏺ Read(research/07-evolution-architecture-research.md)
+  ⎿  Read 212 lines
+
+⏺ Update(research/07-evolution-architecture-research.md)
+  ⎿  Updated research/07-evolution-architecture-research.md with 3 addition
+      and 3 removals
+       453    
+       454    ---
+       455    
+       456 -  ## 7. Hook Points for Evolution Package
+       456 +  ## 8. Hook Points for Evolution Package
+       457    
+       458    Based on document 06 (Hook Points Analysis), these are what
+              Evolution needs:
+       459    
+       460 -  ### 7.1 Essential Hooks (Minimal Cyrus Changes)
+       460 +  ### 8.1 Essential Hooks (Minimal Cyrus Changes)
+       461    
+       462    | Hook | Purpose | Lines to Add |
+       463    |------|---------|--------------|
+     ...
+       465    | Per-Subroutine Model | Use different models per step | 
+             ~15 lines |
+       466    | Metrics Collection | Capture outcomes for grading | ~50 
+             lines |
+       467    
+       468 -  ### 7.2 How Evolution Uses the Hooks
+       468 +  ### 8.2 How Evolution Uses the Hooks
+       469    
+       470    ```typescript
+       471    // Evolution package provides:
+
+⏺ Update(research/07-evolution-architecture-research.md)
+  ⎿  Updated research/07-evolution-architecture-research.md with 2 addition
+      and 2 removals
+       499    };
+       500    ```
+       501    
+       502 -  ### 7.3 What Evolution DOESN'T Need
+       502 +  ### 8.3 What Evolution DOESN'T Need
+       503    
+       504    - Parallel worktree execution (use sub-issues instead)
+       505    - MCP customization (existing config is sufficient)
+     ...
+       507    
+       508    ---
+       509    
+       510 -  ## 8. Building Knowledge Base
+       510 +  ## 9. Building Knowledge Base
+       511    
+       512    Before evolution can improve, it needs knowledge:
+       513    
+
+⏺ Update(research/07-evolution-architecture-research.md)
+  ⎿  Updated research/07-evolution-architecture-research.md with 11        
+     additions and 10 removals
+       509    
+       510    ## 9. Building Knowledge Base
+       511    
+       512 -  Before evolution can improve, it needs knowledge:
+       512 +  Before evolution can improve, it needs knowledge
+           +  . **This is where specialist agents come in** (see section 
+           +  6).
+       513    
+       514 -  ### 8.1 Knowledge Sources
+       514 +  ### 9.1 Knowledge Sources
+       515    
+       516 -  | Source | What It Provides |
+       517 -  |--------|-----------------|
+       518 -  | Codebase exploration | Patterns, conventions, 
+           -  architecture |
+       519 -  | Existing docs | What's already documented |
+       520 -  | Run logs | What worked, what failed |
+       521 -  | Grader outputs | Quality assessments |
+       522 -  | Human feedback | Corrections, preferences |
+       516 +  | Source | What It Provides | Who Gathers It |
+       517 +  |--------|-----------------|----------------|
+       518 +  | Codebase exploration | Patterns, conventions, 
+           +  architecture | Specialist agents |
+       519 +  | Existing docs | What's already documented |
+           +   Specialist agents |
+       520 +  | External resources | Library docs, APIs, frameworks | 
+           + Specialist agents |
+       521 +  | Run logs | What worked, what failed | Evolution system |
+       522 +  | Grader outputs | Quality assessments | Grading workflows 
+           + |
+       523 +  | Human feedback | Corrections, preferences | Manual input 
+           + |
+       524    
+       525 -  ### 8.2 Knowledge Building Workflow
+       525 +  ### 9.2 Knowledge Building Workflow
+       526    
+       527    Run before task execution to gather context:
+       528    
+
+⏺ Update(research/07-evolution-architecture-research.md)
+  ⎿  Updated research/07-evolution-architecture-research.md with 2 addition
+      and 2 removals
+       540    
+       541    ---
+       542    
+       543 -  ## 9. Commands vs Subroutines
+       543 +  ## 10. Commands vs Subroutines
+       544    
+       545    Evolution can mix both:
+       546    
+       547 -  ### 9.1 Commands (Claude Code native)
+       547 +  ### 10.1 Commands (Claude Code native)
+       548    
+       549    - Stored in `.claude/commands/`
+       550    - Can be run manually for testing
+
+⏺ Update(research/07-evolution-architecture-research.md)
+  ⎿  Updated research/07-evolution-architecture-research.md with 2 addition
+      and 2 removals
+       551    - Easy to iterate on
+       552    - Good for: research, exploration, one-off tasks
+       553    
+       554 -  ### 9.2 Subroutines (Cyrus native)
+       554 +  ### 10.2 Subroutines (Cyrus native)
+       555    
+       556    - Defined in procedures
+       557    - Automated execution
+       558    - Integrated with Linear
+       559    - Good for: structured workflows, production
+       560    
+       561 -  ### 9.3 Why Mix Them
+       561 +  ### 10.3 Why Mix Them
+       562    
+       563    | Use Commands For | Use Subroutines For |
+       564    |------------------|---------------------|
+
+⏺ Update(research/07-evolution-architecture-research.md)
+  ⎿  Updated research/07-evolution-architecture-research.md with 2 addition
+      and 2 removals
+       581    
+       582    ---
+       583    
+       584 -  ## 10. Open Questions for Planning
+       584 +  ## 11. Open Questions for Planning
+       585    
+       586 -  ### 10.1 Architecture Questions
+       586 +  ### 11.1 Architecture Questions
+       587    
+       588    1. **Package structure**: What's in `evolution/src/`? What 
+             are the main modules?
+       589    2. **Workflow storage**: Where do workflow.json files live?
+              Per-repo? Central?
+
+⏺ Update(research/07-evolution-architecture-research.md)
+  ⎿  Updated research/07-evolution-architecture-research.md with 8 addition
+      and 8 removals
+       590    3. **Prompt versioning**: How do we track prompt versions? 
+             Git? Database?
+       591    4. **Trigger mechanism**: How does Evolution know when a 
+             run finishes?
+       592    
+       593 -  ### 10.2 Grading Questions
+       593 +  ### 11.2 Grading Questions
+       594    
+       595    1. **Grader prompts**: What makes a good grader prompt?
+       596    2. **Meta-grader criteria**: How do we know if a grader is 
+             good?
+       597    3. **Disagreement handling**: What if graders disagree?
+       598    4. **Human override**: When does human judgment override 
+             grading?
+       599    
+       600 -  ### 10.3 Evolution Questions
+       600 +  ### 11.3 Evolution Questions
+       601    
+       602    1. **Change magnitude**: How big should prompt changes be?
+       603    2. **Acceptance criteria**: When is a change "better"?
+       604    3. **Rollback mechanism**: How do we revert bad changes?
+       605 -  4. **Experiment tracking**: How do we track what we tried?
+       605 +  4. **Proposition conflicts**: How do we combine multiple 
+           + improvement goals?
+       606    
+       607 -  ### 10.4 Practical Questions
+       607 +  ### 11.4 Practical Questions
+       608    
+       609 -  1. **First workflow**: What's the first workflow to evolve?
+       610 -  2. **Test strategy**: How do we test Evolution itself?
+       611 -  3. **Metrics**: What do we measure to know it's working?
+       612 -  4. **Timeline**: What order do we build things?
+       609 +  1. **First agent**: What's the first specialist agent to 
+           +  create?
+       610 +  2. **First workflow**: What's the first workflow to evolve?
+       611 +  3. **Test strategy**: How do we test Evolution itself?
+       612 +  4. **Metrics**: What do we measure to know it's working?
+       613    
+       614    ---
+       615    
+
+⏺ Update(research/07-evolution-architecture-research.md)
+  ⎿  Updated research/07-evolution-architecture-research.md with 39        
+     additions and 14 removals
+       613    
+       614    ---
+       615    
+       616 -  ## 11. Key Insights from Discussion
+       616 +  ## 12. Key Insights from Discussion
+       617    
+       618 -  ### 11.1 The Interface is the Config
+       618 +  ### 12.1 The Interface is the Config
+       619    
+       620    The workflow.json + prompt files are the "API" between 
+             Cyrus and Evolution. Small text changes = big behavior 
+             changes. This is the minimal surface area for improvement.
+       621    
+       622 -  ### 11.2 Separation Prevents Cheating
+       622 +  ### 12.2 Separation Enables Evolution at Every Level
+       623    
+       624 -  Each grading layer runs in a separate session. Session N 
+           - can only read outputs from sessions 0 to N-1. It cannot 
+           - modify its own evaluation criteria mid-run.
+       624 +  Each grading layer runs in a separate session. Session N 
+           + can only read outputs from sessions 0 to N-1. This isolation
+           +  lets us evolve each layer independently - task execution, 
+           + grading, meta-grading all improve separately.
+       625    
+       626 -  ### 11.3 It's All Cyrus
+       626 +  ### 12.3 It's All Cyrus (Dogfooding)
+       627    
+       628    We don't build a new execution engine. Grading is just 
+             another workflow. Meta-grading is just another workflow. 
+             Evolution is just another workflow. All run by Cyrus with 
+             different prompts.
+       629    
+       630 -  ### 11.4 Evolve the Evolution
+       630 +  ### 12.4 Evolve the Evolution
+       631    
+       632    The evolution package itself can be improved:
+       633    - Cyrus-as-developer works on the Cyrus repo
+     ...
+       635    - It can improve graders, meta-graders, the evolution 
+             workflow itself
+       636    - Dogfooding all the way down
+       637    
+       638 -  ### 11.5 Minimal Cyrus Changes
+       638 +  ### 12.5 Start From What Exists
+       639    
+       640 +  First workflow replicates current Cyrus exactly. Then we 
+           + improve by adding layers:
+       641 +  1. Documentation agents (improve knowledge)
+       642 +  2. Better planning (uses improved knowledge)
+       643 +  3. Better implementation (uses better plans)
+       644 +  
+       645 +  ### 12.6 Specialist Agents for Context Management
+       646 +  
+       647 +  Agents don't pollute orchestrator context:
+       648 +  - Agent reads extensively, returns summary
+       649 +  - Orchestrator stays focused
+       650 +  - Each agent owns its domain (Postgres, Auth, API, etc.)
+       651 +  
+       652 +  ### 12.7 Evolve Propositions, Not Just Agents
+       653 +  
+       654 +  When multiple improvements target the same component:
+       655 +  - Don't let them override each other
+       656 +  - Combine the goals into one proposition
+       657 +  - Evolve the proposition, then evolve the agent to meet it
+       658 +  
+       659 +  ### 12.8 Minimal Cyrus Changes
+       660 +  
+       661    We only add hooks where absolutely necessary:
+       662    - Prompt path override (~10 lines)
+       663    - Per-subroutine model (~15 lines)
+     ...
+       646    
+       647    ---
+       648    
+       649 -  ## 12. Next Steps
+       649 +  ## 13. Next Steps
+       650    
+       651 -  1. **Plan the Evolution package structure** - What modules,
+           -  what dependencies
+       652 -  2. **Define the first workflow** - Start simple, iterate
+       653 -  3. **Design grading prompts** - What makes output "good"
+       654 -  4. **Implement minimal hooks** - Add the 3 hook points to 
+           - Cyrus
+       655 -  5. **Build workflow executor** - Code that runs 
+           - workflow.json
+       656 -  6. **Test manually** - Run workflows by hand before 
+           - automation
+       651 +  1. **Replicate current Cyrus workflow** - First 
+           + workflow.json mirrors full-development exactly
+       652 +  2. **Create first specialist agent** - Pick a domain (e.g.,
+           +  project patterns)
+       653 +  3. **Build agent that documents the codebase** - Writes to 
+           + docs folder
+       654 +  4. **Add agent call before planning** - Planning reads 
+           + agent output
+       655 +  5. **Grade the improvement** - Did better docs improve 
+           + planning?
+       656 +  6. **Iterate** - Evolve agent, add more agents, add more 
+           + layers
+       657    
+       658 +  The first goal is: **Better documentation → Better 
+           + planning**
+       659 +  
+       660 +  This is the hypothesis we test first. Everything else 
+           + builds on it.
+       661 +  
+       662    ---
+       663    
+       664    **Document Status:** Research complete
+
+⏺ Updated the research document with your clarifications:
+
+  Key changes made:
+
+  1. Section 5.1 - Reframed graders: Not about cheating, about evolving the
+  graders themselves
+  2. Section 4.2 - Fixed workflow: Now starts from current Cyrus
+  (full-development), not inventing new
+  3. Section 5.4 - Added layered evolution strategy with hypothesis-driven
+  approach
+  4. Section 5.5 - Added evolution with propositions: Combine goals, don't
+  let them conflict
+  5. Section 6 - Added specialist agents:
+    - Why agents (context isolation)
+    - What they do (research, document, respond)
+    - How they evolve
+  6. Section 12 - Updated key insights:
+    - "Start from what exists"
+    - "Specialist agents for context management"
+    - "Evolve propositions, not just agents"
+  7. Section 13 - Updated next steps to focus on:
+    - First hypothesis: "Better docs → Better planning"
+    - Create first specialist agent
+    - Build from current system
+
+  The document is now ~690 lines. Ready for planning phase when you are.
+  Anything else to capture before we move on?
+
+> Yeah, though, you're basically saying there's two levels of evolution. 
+Anything can be evolved if it makes sense. It's not workflows, it's not 
+prompts, it's absolutely fucking everything. That's the point. Don't limit 
+it. The whole point is we're basically making things more evil if we need to
+ evolve and we do. An agent, how does an agent fit into this? An agent's not
+ a prompt, it kind of is, but it's not. Same as commands. So we could 
+actually improve anything of Claude. Workflows, MCPs, workflows, you name 
+it, code sequences, ways of split testing, ways of grading, everything kind 
+of. 
+
+⏺ You're right. I was being too narrow.
+
+  Everything can evolve:
+
+  - Prompts
+  - Workflows
+  - Agents (prompt + context + specialization + tools)
+  - Commands
+  - MCPs
+  - Grading criteria
+  - Split testing strategies
+  - Code sequences
+  - How we grade
+  - How we split test
+  - The evolution system itself
+
+  If it affects behavior and can be improved → it can evolve.
+
+  Let me fix this:
+
+⏺ Update(research/07-evolution-architecture-research.md)
+  ⎿  Updated research/07-evolution-architecture-research.md with 17        
+     additions and 6 removals
+       113    
+       114    Evolution doesn't just control workflow sequence - it 
+             controls **everything that determines behavior**:
+       115    
+       116 -  ### 4.1 Two Levels of Evolution
+       116 +  ### 4.1 Everything Can Evolve
+       117    
+       118 -  | Level | What | Files | Example Change |
+       119 -  |-------|------|-------|----------------|
+       120 -  | **Workflow** | Sequence, steps, parameters | 
+           - `workflow.json` | Add a research step before planning |
+       121 -  | **Prompts** | The actual instructions | `prompts/*.md` | 
+           - Add "consider error handling" to planning prompt |
+       118 +  Don't artificially limit what can evolve. If it affects 
+           + behavior and can be improved, it's a candidate:
+       119    
+       120 -  Both must evolve. A perfect workflow with bad prompts won't
+           -  work. Perfect prompts in the wrong order won't work either.
+       120 +  | What | Example | How It's Expressed |
+       121 +  |------|---------|-------------------|
+       122 +  | **Prompts** | Subroutine instructions | `.md` files |
+       123 +  | **Workflows** | Step sequences, parameters | 
+           + `workflow.json` |
+       124 +  | **Agents** | Specialist prompt + context + tools + 
+           + behavior | Agent definitions |
+       125 +  | **Commands** | Claude Code slash commands | 
+           + `.claude/commands/*.md` |
+       126 +  | **MCPs** | Tool configurations, which servers to use | 
+           + MCP config |
+       127 +  | **Grading criteria** | What "good" means | Grader prompts
+           +  |
+       128 +  | **Split testing** | How we compare variants | Testing 
+           + config |
+       129 +  | **Code sequences** | How we chain operations | Procedure 
+           + definitions |
+       130 +  | **The evolution system** | How we evolve things | 
+           + Evolution prompts/code |
+       131    
+       132 +  An agent isn't just a prompt - it's prompt + context + 
+           + specialization + tools + behavior. But it CAN still evolve.
+       133 +  
+       134 +  **The principle:** Anything that determines system behavior
+           +  is evolvable.
+       135 +  
+       136    ### 4.2 Workflow Config (workflow.json)
+       137    
+       138    **Critical: Start from what exists.** The first workflow 
+             must replicate the CURRENT Cyrus system, not invent 
+             something new. Then we improve from there.
+
+⏺ Updated. The principle is now clear:
+
+  Anything that determines system behavior is evolvable.
+
+  - Prompts ✓
+  - Workflows ✓
+  - Agents ✓
+  - Commands ✓
+  - MCPs ✓
+  - Grading criteria ✓
+  - Split testing strategies ✓
+  - Code sequences ✓
+  - The evolution system itself ✓
+
+  No artificial limits. If it affects how the system behaves and it can be
+  improved, it's a candidate for evolution.
+
+> The bit you're missing, although maybe it's here and I can't see it, is 
+how do we evolve? So the point is, it's fine saying everything can evolve, 
+but we always have to say, how are we doing this? And I'm stating it very 
+clearly that each thing has a label. You're doing evolved workflow deep 
+development. That kind of makes sense because the workflow is the 
+centerpiece of the whole thing. Internal to that, you'd have all the pieces 
+that make up that thing we're evolving. It's not really a workflow though, 
+you know, because you're being too literal. It's not a workflow, it's 
+everything necessary. It's the connections of what this thing does. The 
+point is we're doing multiple of them. So what I mentioned earlier is we 
+might want to evolve agents for writing copies. So we create a piece. At the
+ moment you're calling it an evolution pipeline. And so the point is we're 
+calling that particular pipeline 01 agents. And then that is basically 
+self-containing the pieces that we're evolving. Now it may not be containing
+ the actual thing it is, but it's containing the part we're trying to 
+evolve. You see what I mean? So one of the things we could evolve is a 
+workflow, as in the sequence of steps that work together. I've got a feeling
+ the most logical thing is to put these in here. It's just that they're 
+separate things. A workflow is a sequence of steps that we are trying to do 
+in a specific order because we're trying to improve the process. At what 
+point does it loop? How do we make sure that it doesn't move forward until 
+it's confirmed, etc, etc. So it may be having a JSON that controls these is 
+too restrictive. It might be easier to simply just write a piece of code 
+that hooks in and the code contains the logic and the idioms, etc. To me it 
+seems way easier than a JSON. But the point is it's a folder and it has a 
+hook in and then the hook runs these things. So yes, there are prompts in 
+here, but that is separate from how we evolve. The point I was saying 
+earlier is the idea of evolution is we want to make agents better. That's us
+ picking on a part of the system and turning it into a thing we're going to 
+evolve. So it could be anything we're picking on. See what I mean? We could 
+say the prompt, the resource prompt, we want to evolve the resource prompt. 
+So we point at the resource prompt, we're now going to evolve it, which 
+means we're going to, it means it has to trigger inside this folder. We're 
+going to trigger the resource prompt as in the evolution folder saying, this
+ is the prompt we're improving. It's going to look at the prompt. It's going
+ to create multiple prompts. Multiple are going to be used. You see what I'm
+ saying? It's a container that holds the thing we're trying to evolve. And 
+it's the evolution software is going to look at the logs and do engraved to 
+try and see if it, how we're going to do it. But it's not the way you're 
+looking at it. You keep trying to structure it in this odd way where 
+workflows are the thing we're evolving. No, workflows is an experiment we're
+ trying to use to improve the system. We're going to try a different way of 
+doing something. See, I mean, that's not evolution. That is trying a new 
+idea. Now, if we want to try that idea and evolve it, which I don't think we
+ would, we would evolve a part of it. See, I mean, so there is an aspect of 
+this is the workflow and these are the parts of that workflow we want to 
+evolve. Then we have a new workflow. Remember, the workflow is triggered by 
+linear, by the name, by the orchestrator choosing. So me might want to say, 
+using your deep development as an example, use deep development and blah, 
+blah, blah. We add a keyword so it gets selected, so it knows what one to 
+run. You see what I'm saying? The thing is the fixed framework, the 
+workflow. Evolution are parts of it. Not all parts are involved. So the 
+workflow, Jason, by it's health. We're probably not going to change. We have
+ it, we've got it in place. We're trying to, I'm not trying to, 
+automatically change the structure and change the shape. That makes no 
+sense. Why would we do that? I also need you to stop updating the document 
+every single time we have a conversation. We need to complete the idea 
+process before you update the document. You keep changing it and you keep 
+facking it up. Stop doing that. Let's get the clarity right and it's not 
+right yet. So the point is we're not creating a fixed framework. We're not 
+doing that. The framework is the way of us creating different workflows, 
+yes? Sorry, not framework, wrong word, workflow. We're not doing a fixed 
+workflow. We're going to have multiple workflows. We're testing out new 
+ideas. We want to find better ways of doing it. For example, the current 
+workflow that's in place is hardwired in the system. We need to extract it 
+out so it's in a much more usable place to allow us to improve it. It 
+doesn't mean we're evolving it using AI evolving. It means we're going to 
+improve it manually doing it. So the point is we'd have a discussion. For 
+example, let's create a TDD, a strict TDD development workflow. What that 
+would be is we'd take the same workflow that exists where it goes to develop
+ code. Instead of it having one step where it develops a code, we make it 
+three steps. We do it first, it writes the tests. Then once the tests are 
+done and it's proved all the tests are working and they're all passing, we 
+then move to the next step in the workflow. Run as a separate session. You 
+see the point I'm saying? 
+
+⏺ I'll stop updating the document and let's get clarity first.
+
+  Let me make sure I understand:
+
+  Workflows = Manual Design Decisions
+  - We create different workflows to try new ideas
+  - Example: Current workflow has one "develop code" step
+  - New TDD workflow: write tests → verify tests pass → write code (3
+  separate sessions)
+  - This is US designing a better approach, not AI evolving it
+  - The workflow JSON is the fixed framework - we're not AI-evolving it
+
+  Evolution = AI Improving Specific Parts
+  - We pick a specific thing to evolve (a prompt, an agent, etc.)
+  - Create a folder/container for that evolution
+  - The evolution system runs that thing, grades it, improves it
+  - Example: 01-agents/ - evolving how agents work
+  - Example: 02-research-prompt/ - evolving the research prompt specifically
+
+  The distinction:
+  Workflow (manual):
+    step 1: research    ← this prompt could be AI-evolved
+    step 2: plan        ← this prompt could be AI-evolved
+    step 3: implement   ← this prompt could be AI-evolved
+
+  The SEQUENCE is fixed by us.
+  The PARTS can be evolved by AI.
+
+  Evolution container:
+  - Folder that holds what we're trying to evolve
+  - Has a hook that triggers
+  - Contains the logic for how to evolve that specific thing
+  - Looks at logs, grades, creates variants, tests them
+
+  Is this closer? The workflow is the frame we build. Evolution improves the
+   pieces inside it.
+
+> So once we have a workflow, we then evolve parts of the workflow. That's 
+the point. So now let's say they had names, W1 was workflow 1, and we want 
+to improve step 1 of it as you've got AI agents. We then say W1 is the thing
+ we're going to involve when we're going to involve the agents which are in 
+this step inside the workflow. If we don't do that, we can't evolve it 
+because we don't know what we're talking about. So therefore we know what 
+we're improving because of what we're attempting to do. We start the 
+improvement by postulating an assumption. We say this is what we want to do 
+and this is why. That's written in normal language. That doesn't change. 
+That is the benchmark. The second part is how do we prove? How do we evolve 
+it? As in, not what the mechanism is involving, that's basically trying 
+different approaches. No, what I'm saying is how do we evaluate that? So 
+it's improved because it can't simply be subjective. Like, yes, it's better.
+ That's not good enough. It has to be an actual tangible thing we're 
+measuring. Otherwise we cannot improve it because we're not aiming at 
+something. We're moving at a moving target. You see the point I'm saying? So
+ the point is we're improving parts of the workflow. We're evolving parts of
+ the workflow and the reason we're doing that is because manually improving 
+it is not the right decision. We have to improve it using AI, using 
+intelligence. The intelligence will basically go, okay, I want to improve 
+it. I understand what we're trying to improve. I understand what we're 
+measuring. And then you come up with new postulations, new ideas, new goals.
+ Based on these targets, this is the idea I have. And let's say your idea 
+is, I believe by hyper-focusing the agents and bringing them into more of 
+them, more specialists, it will improve the system because blah, blah, blah.
+ So therefore what we're now going to do evolving and we now know what we're
+ going to do, we can now evolve that system. To evolve it, that means we're 
+going to have to make some code changes because at the moment there's only 
+one agent. So we changed the primary prompt that says, do the testing first.
+ Now it says, pick the unique agent that does the testing first. You see the
+ part I'm saying? It's more complex, but it has to be hooked on something. 
+Because the workflow contains all the moving parts, it means it's something 
+happening in the workflow. You could basically post it into a repo, do a new
+ version of the whole workflow container with the evolution parts in it, 
+with some code changes to use the new things that are evolving. We continue 
+measuring. Get the idea? Think very hard. Push back if this is wrong. We 
+don't want to make it overly complex. I can see there's complex parts in 
+what I'm saying. It may be the incorrect thing to do. We want to make this 
+simple and easy to move forward, not complex. It should be easy to evolve. 
+It might be it's easier to evolve having a fixed workflow that we don't 
+change as metaphor. If we actually want to say it's better, we have more 
+multiple agents as we're discussing, maybe we create a workflow specifically
+ for that scenario. You see what I mean? Because then it's easier to evolve.
+ It's easier to understand because we're not changing code so much. You get 
+there, dude. Please fight back if I'm wrong. 
+
+⏺ Let me think hard and push back.
+
+  The complexity I see:
+
+  You're describing two different activities:
+
+  1. Structural changes - "Let's use multiple specialist agents instead of
+  one"
+    - This requires code changes
+    - Changes the workflow shape
+    - This is a DESIGN decision, not evolution
+  2. Prompt/behavior evolution - "Make this agent better at what it does"
+    - Just text changes
+    - Structure stays the same
+    - AI can do this
+
+  The problem with mixing them:
+
+  If AI evolution can propose "add more agents", then it needs to write
+  code, change the workflow structure, change how things hook together.
+  That's complex. That's not evolution - that's redesign.
+
+  My pushback - keep them separate:
+
+  | Activity          | Who Does It | What Changes                        |
+  |-------------------|-------------|-------------------------------------|
+  | Structural design | Us (manual) | New workflow, new steps, new agents |
+  | Prompt evolution  | AI          | Text in prompts, same structure     |
+
+  Concrete proposal:
+
+  1. When we have a hypothesis that needs structural change ("more
+  specialist agents will help"):
+    - We manually design a NEW workflow with that structure
+    - Deploy it, test it, see if the hypothesis holds
+  2. Once we have a workflow with multiple agents:
+    - AI evolves the individual agent prompts
+    - Structure stays fixed, prompts improve
+
+  Why this is simpler:
+  - AI only touches text (prompts)
+  - No code changes from evolution
+  - Structural experiments are deliberate, human-driven
+  - We compare WHOLE workflows (W1 vs W2), not evolving structure
+  mid-workflow
+
+  The question: Is prompt-level evolution enough? Or do we genuinely need AI
+   to propose structural changes?
+
+> I completely agree with your point because if we do a new workflow it's 
+very easy to go, we've got two workflows, let's run both of them side by 
+side, we can see which one works better. We still achieve the same thing, 
+we're just not evolving in the same way that's our evolution through 
+redesign through coding. It can still be done quickly but it's basically 
+adding a new feature because it's a new way. So when we rebuild this we'll 
+still use Cyrus, we'll still propose it, we'll come up with a spec, we'll 
+design what it is, we'll use Cyrus to build it and then we have a new one we
+ test. So I completely agree. Coming to your final question, is prompt level
+ evolution enough? I don't see it as prompt level, you do. So remember this 
+is, we're harnessing, because the flow of this is we're trying to improve 
+how Claude code does its work. And that means we improve it by changing the 
+information that's being provided. So it's not just prompts, it's structural
+ as well. But it's, the example we're using is having a specialist AI 
+retrieving information. So we create a set of them, we, this is our whole 
+workflow, we change the process of it, it makes sense to do it. And then we 
+go, we want them to do a better job of describing what they're trying to 
+describe. So I believe it is, it's just not the way you're framing it as, is
+ it enough? It's prompt level. It's not prompt level. It feels that way. So 
+basically, I have a prompt in resource information, how it outputs the data 
+matters, when it writes it to a document, how is that document indexable? Do
+ we create an index? Do we do it into a thing that's easier to read? Do we 
+do pre-scanning and summarize the documents? So instead of writing one, it's
+ writing two. I mean, these are all what it's doing. This is a prompt, true,
+ but it's way more possible to improve, isn't it? There's a lot more ground 
+here. We're not simply saying rewrite this prompt, it's a lot larger. It's 
+still intelligence. The point is the evolutionary system is proposing a 
+solution to a problem, that's the idea. It's not just doing something. It's 
+basically, this is how I believe it should happen. But then, you know, 
+that's, this is what we're about to build. So it's an intelligence of 
+looking at what it needs to change and why. Now what I'd like to do is find 
+some open source projects that do it. But the DIPSE was one of them, DISP, 
+whereby it had a way of evaluating. But you see the point I'm saying, again,
+ we have to be able to find a way of doing this. 
+
+⏺ I understand now. It's not "prompt-level" as in just tweaking words. It's:
+
+  Intelligent improvement of what an agent/prompt DOES
+
+  Example - a research agent could evolve from:
+  - "Write documentation about Postgres patterns"
+
+  To:
+  - "Write documentation + create a searchable index + write a 100-word
+  summary + structure with headers for quick lookup + output in both MD and
+  JSON"
+
+  That's still technically "the prompt" but it's a massive behavioral
+  change. The evolutionary system proposes these improvements:
+  - "I notice the planning step struggles to find information. Proposal: Add
+   indexing to research output."
+  - Test it, measure it, keep it if better.
+
+  So the scope:
+  - Workflow structure = manual design (new workflow if needed)
+  - What agents/prompts DO = intelligent evolution (can be significant
+  changes)
+
+  What you're looking for:
+
+  An evolutionary system that:
+  1. Understands the goal (benchmark in plain language)
+  2. Has measurable targets
+  3. PROPOSES solutions (not random mutation)
+  4. Tests the proposal
+  5. Keeps improvements
+
+  DSPy does some of this - it has evaluation and optimization. But you're
+  right, we need to look at what exists.
+
+  Do you want me to research what's out there? Things like:
+  - DSPy (prompt optimization with eval)
+  - TensorZero (A/B testing for LLM)
+  - Academic work on intelligent prompt evolution
+  - Any open source "LLM improvement" frameworks
+
+  Or do you have a different direction in mind?
+
+> That's beautifully said, your example. That's exactly the point. Right 
+documentation plus index, because you're proposing that the AI is 
+struggling. We notice when it's doing it, the output of planning, for 
+example, is not very good because it's struggling to find information. Let's
+ improve how it finds information. It's more than likely that's going to 
+improve its ability to write planning. That's exactly the point. So the 
+point is you could propose a code change. Why not run one agent followed by 
+an approval agent? You see what I mean? You're writing a new agent. You're 
+basically causing the first one to be triggered by the second. In theory, we
+ have to write some code for that. But again, it could be done with JSON. 
+Your original idea of having a JSON that's describing this runs followed by 
+this followed by this with some keywords as to what it's doing. And then 
+that means we're actually running it in code without having to write code. 
+But my view is the JSON. Isn't it just as simple to write a few lines of 
+code that do the same thing? Then we're embedding logic into a tiny bit of 
+JavaScript that's triggering it. I'm not sure if it's easier or better 
+because if we write purely in JSON, we then have to write code to interpret 
+the JSON. Can we just write a simple JSON that does the interpretation 
+automatically and write a description of what it's doing above in like 
+JSDoc? That achieves the same thing. It's readable. But it's way more 
+powerful, isn't it? Whereas JSON way limiting and we keep on having to add 
+new code to do what we're trying to get JSON to do. Whereas if we just come 
+up with a very, very simple JavaScript format, JS doc description, what do 
+you think? 
+
+⏺ You're absolutely right. JSON configs often become "a worse programming
+  language."
+
+  The JSON trap:
+  {
+    "steps": [
+      { "type": "agent", "name": "research" },
+      { "type": "conditional", "if": "needsApproval", "then": "approval" },
+      { "type": "parallel", "agents": ["a", "b"] }
+    ]
+  }
+  Now we need an interpreter for "conditional", "parallel", "loop", etc.
+  We're building a programming language in JSON.
+
+  The code approach:
+  /**
+   * Research Workflow
+   * 
+   * Runs specialist research agent, gets human approval,
+   * then runs planning with research context.
+   * 
+   * Evolving: research agent output format (indexing, summaries)
+   */
+  export async function researchWorkflow(context: WorkflowContext) {
+    const research = await runAgent('research', context);
+
+    if (research.needsApproval) {
+      await requireApproval('Continue with planning?');
+    }
+
+    const plan = await runAgent('planning', { ...context, research });
+    return plan;
+  }
+
+  Why this is better:
+  - JSDoc is the description (human readable)
+  - Code IS the logic (no interpreter needed)
+  - Can do anything: conditionals, loops, parallel, error handling
+  - When evolution proposes "add approval step" → adds one line
+  - When evolution proposes "run two agents parallel" → Promise.all
+  - TypeScript gives us type safety
+
+  The format:
+  - Simple .ts files
+  - JSDoc describes intent
+  - Exports a function that runs the workflow
+  - Uses simple helpers: runAgent(), requireApproval(), etc.
+
+  This is simpler AND more powerful. We're not fighting a config format.
+
+> Yeah, I'm glad you agree. It's way more powerful. It's way more powerful. 
+It's also really quick. So quick to do. And if it's the same language we're 
+in TypeScript now, it's very easy to interpret. It's very easy to connect. 
+It's very easy to do when we're trying to add hooks. Because all we want to 
+do is change maybe a file. So, you know, I'm imagining when we get to the 
+hooks part, that how we do the hooks is we load a different file. So instead
+ of us trying to hook into the system, we take the primary file, we rename 
+it and we drop in a new one or something like that. We can switch out by 
+variable or some way of doing it so that we're not changing the primary 
+code. In theory, we could actually have, yeah, but you get the idea. I'm not
+ sure how we do it, but you get the idea of what I'm thinking. 
+
+⏺ Yeah, the hook becomes dead simple:
+
+  Instead of:
+  - Complex callback injection points
+  - Handler interfaces
+  - Event systems
+
+  Just:
+  - Load a file
+  - Want to change behavior? Swap the file
+
+  Default: edge-worker loads → workflows/full-development.ts
+  Hooked:  edge-worker loads → evolution/workflows/research-workflow.ts
+
+  Could be as simple as:
+  - Environment variable: WORKFLOW_PATH=./evolution/workflows/
+  - Or a config entry pointing to the folder
+  - Or a symlink swap
+
+  The "hook infrastructure" is just: which file gets loaded
+
+  Same language, same types, same helpers. Your workflow file just needs to
+  export the right function signature. Drop it in, it runs.
+
+  No complex injection framework. No interpreter. No middleware chains. Just
+   files.
+
+> Slightly different, I'm imagining the workflow we're hooking into is our 
+evolutionary system. So we're going to figure out, which we haven't done 
+yet, but let's just guess, where do we save the files? So what we're 
+basically doing is we load a new file that we've rewritten with our hooks 
+and how we're going to pass our variables and all the rest of it gives us a 
+lot more control. All we do is we switch one file for another. It's not 
+hooking to the workflow, it's hooking to our evolutionary system. And then 
+it in turn loads our workflow, etc, etc, etc. So the thing we're hooking 
+into is our hooking system. Does that make sense? 
+
+⏺ Yes, that makes sense. The evolution package is the OUTER layer, not
+  something that hooks INTO Cyrus.
+
+  Evolution System (our package)
+      │
+      ├── Loads modified Cyrus file (with our instrumentation)
+      │
+      ├── That file loads our workflow
+      │
+      └── Everything runs through our system
+
+  So:
+  - Evolution is the entry point
+  - Evolution decides what to load
+  - Evolution swaps in the files it needs
+  - Cyrus code runs INSIDE our system, not the other way around
+
+  We're not "hooking into Cyrus" - we're wrapping Cyrus. Our evolution
+  package is the host. It loads what it needs, instruments what it needs,
+  controls the flow.
+
+  The "hook" is just: which version of a file does our system load?
+
+> I know you misunderstand. No, it 100% hooks into Cyrus. 100% it does. 
+That's the point. But it's not hooking directly to our workflow. It's 
+hooking to our new package called Evolution. It in turn is managing things 
+like what workflow we're running, etc, etc. Because we'll have multiple 
+workflows. We need the orchestrator to be able to go, it's going to choose 
+and we're going to have these are the list of things you can choose from. 
+And so therefore linear is the one choosing the workflow pattern because 
+we're naming them. We've given all names. We're able to say use this one and
+ it will use that one because we told it to. So the point is the workflows 
+are not so much being switched out without anyone knowing. They're very 
+specific. They're named. Now in theory we could have workflows changing by a
+ name as well. I'm trying to find simplicity. But the point is linear. We're
+ going to say build this and we're going to tell it what to do. So we're 
+going to use a keyword or something like it. Otherwise we have no control. 
+We can't have the system dynamically changing. It has to be fixed from that 
+perspective. So if we want to try a new system and say could you run this in
+ both this and this. Then the orchestrator will run the same code in two 
+completely separate frameworks. Create two completely separate hooks. We 
+haven't got to this yet. But if it was ENG for engineering term. ENG 13. The
+ idea I'm thinking is we put letters on the end with no spaces. ENG 13 small
+ case A, B, C, D. That's our way of controlling. Because we can't create sub
+ tasks. Because sub tasks are how Cyrus breaks up complicated pieces as 
+we've recently discovered. So what we need to be able to do is basically if 
+we're doing W1, W2 as workflow 1, workflow 2. It could be ENG 13, W, W14. So
+ it's ENG 13 in workflow X. You see the point I'm saying. We need a way of 
+coming up with a system that works completely with what's already there 
+without breaking anything. And yet automatically working. Now we could do it
+ differently and do ENG 13 and then we put labels inside linear. But because
+ it creates work trees. Work trees are where all the code is. And it's also 
+how we're tracing behavior. We don't want to break the Cyrus model. So ENG 
+13 is obviously the label of it. Maybe we create a new linear issue called 
+ENG 13A, ENG 13B. Do we call it A hyphen what it is? You see what I mean? We
+ have to do A way whereby everything continues to work. We haven't broken 
+anything. It's still the Cyrus way. 
+
+⏺ I understand now. Let me recap:
+
+  1. Evolution hooks INTO Cyrus (not wrapping)
+  2. Evolution manages which workflow runs
+  3. Linear is the trigger - issue name/labels control everything
+  4. Worktrees per issue - can't break this model
+  5. Sub-tasks are reserved (Cyrus uses them for breaking up work)
+
+  The problem: How do we run the same task through two different workflows
+  for comparison?
+
+  Each workflow run needs:
+  - Its own worktree
+  - Its own issue (for tracking)
+  - Clear naming so we know what's what
+
+  Options:
+
+  | Approach                     | Example                      | Pros
+                  | Cons                                     |
+  |------------------------------|------------------------------|-----------
+  ----------------|------------------------------------------|
+  | Suffix on issue              | ENG-13-W1, ENG-13-W2         | Clear,
+  separate worktrees | Creates multiple issues                  |
+  | Labels                       | ENG-13 + label "workflow-v2" | Single
+  issue              | One worktree, can't compare side-by-side |
+  | Child issues (not sub-tasks) | ENG-13 spawns ENG-14, ENG-15 | Separate
+  worktrees        | Naming gets confusing                    |
+
+  Cleanest might be:
+  - ENG-13 is the "parent" concept
+  - ENG-13-A (workflow 1), ENG-13-B (workflow 2) are actual Linear issues
+  - Each gets its own worktree
+  - Evolution system knows A = workflow 1, B = workflow 2
+  - Results can be compared
+
+  The suffix becomes the workflow selector. Cyrus sees normal issues.
+  Evolution interprets the suffix.
+
+  Does that align with what you're thinking?
+
+> Your 'cleanest might be' is wrong. ENG13 is the parent concept. It is. The
+ reason it would do sub is because it would. What I'm saying is if we want 
+to run workflows then we would have to change the workflows so there 
+wouldn't be an ENG13. It would be ENG, A, B, C. They would be the roots and 
+then ENG13, A, B, C, D. The sub ones would happen dynamically because it 
+would automatically do them so we have to use the same concept. So what I'm 
+saying is if we're trying to run multiple workflows at the same time we 
+label the workflows in the thing so we use exactly the structure that's 
+already there, ENG13- whatever the workflow is. It has to be hard word. It 
+has to be the system. Therefore if we are asking for an issue, ENG13A, WA1, 
+basically workflow 1, then EFFECT created multiple sub that would be ENG13A 
+whatever the sub is. Do you agree? 
+
+⏺ Yes, I agree. The hierarchy:
+
+  ENG-13 (the concept/task we want done)
+  │
+  ├── ENG-13A-W1 (workflow 1 root)
+  │   ├── ENG-13A-W1-1 (sub, created by Cyrus)
+  │   └── ENG-13A-W1-2 (sub, created by Cyrus)
+  │
+  └── ENG-13B-W2 (workflow 2 root)
+      ├── ENG-13B-W2-1 (sub, created by Cyrus)
+      └── ENG-13B-W2-2 (sub, created by Cyrus)
+
+  The workflow identifier is in the ROOT issue name. Cyrus creates subs
+  naturally from there using the same pattern.
+
+  - We create ENG-13A-W1 when we want workflow 1
+  - Cyrus sees it as a normal issue
+  - If Cyrus breaks it up, it creates ENG-13A-W1-whatever
+  - Everything traces back
+  - Evolution system reads the "W1" / "W2" to know which workflow config to
+  use
+
+  Same structure as exists. Just the naming tells us which workflow. Cyrus
+  behavior unchanged.
+
+> Remember, ENG 138W1 is also created by Cyrus. We're just changing how it 
+labels them. That's all we've done. So we're basically saying it's a 
+workflow rather than a work tree, but work trees continue to function as 
+they've always functioned. 
+
+⏺ Right. Cyrus creates them. We just influence the naming.
+
+  - Cyrus runs under workflow W1
+  - Cyrus creates issues, includes W1 in the label
+  - Worktrees work exactly as before
+  - Sub-issues work exactly as before
+
+  The ONLY change is Cyrus knows "I'm running as W1" and includes that in
+  naming. Everything else is unchanged.
+
+> Exactly, because the point is that in linear we would say 'let's build 
+this' but use 'workfully one and true and parallel'. Then Cyrus itself would
+ create a 'w1' and a 'w2', because we've asked it to. You see what I mean? 
+The orchestrator is the one doing it. 
+
+⏺ Got it. The full flow:
+
+  1. Human creates ONE issue in Linear: "Build X, use W1 and W2 in parallel"
+  2. Orchestrator reads that instruction
+  3. Orchestrator creates ENG-13-W1 and ENG-13-W2
+  4. Both run in parallel, separate worktrees
+  5. Results compared
+
+  We don't manually create the workflow issues. The orchestrator does it
+  because we asked "run these workflows."
+
+> Exactly, beautifully said. Now we have to deal with where is this stuff? 
+Because we need to save this stuff. So are we going to create the workflows 
+and keep them in Cyrus itself as we're evolving Cyrus? Because Cyrus is 
+evolving the work trees and the work trees are being evolved connected to a 
+project. But are we evolving work trees connected to multiple projects so 
+that work trees are available? Sorry, work trees, I'm using the wrong word, 
+workflow. Are the workflows available to all things? In which case it's part
+ of Cyrus. In theory it is part of Cyrus, isn't it? In which case we're 
+evolving and saving it in the Cyrus work tree. It's an interesting one 
+because it really shouldn't be in the work tree but it has to be saved. It 
+has to be somewhere. Where do we put this? Because Cyrus right now, when 
+we're using Cyrus to evolve Cyrus, Cyrus is in the repo, inside the repo 
+folder in the tilde.siris folder. The tracking and tracing is in that folder
+ as well. So everything's located. The work trees are in there. Everything's
+ in the central place so it kind of makes sense that our work trees, maybe 
+we do it as a folder in there and we commit the folder when we're committing
+ the other, when we're committing Cyrus. Or they're inside the Cyrus repo 
+and just the Cyrus repo's there. If we build it as a binary then the repos 
+would be inside the binary because they're co-located with the code. So what
+ we're doing is I think makes sense because we commit it. What's interesting
+ however is this runs on multiple machines. So if there's 10 people using 
+it, the workflows are evolving locally to each person's machine. They're not
+ being evolved en masse. You see what I mean? So if we were to try and 
+evolve it en masse, I'm not sure we can, but we could, would mean that our 
+workflows are off machine potentially. When we're initially developing 
+locally, I suppose it has to be two locations. But you see the question, 
+it's an interesting one. How do we resolve that? 
+
+⏺ This is the right question. Let me think through it:
+
+  Two modes:
+
+  1. Development (evolving Cyrus itself)
+    - Workflows live in Cyrus repo: packages/evolution/workflows/
+    - Gets committed with code
+    - Shared via git push/pull
+    - This is how we develop and improve workflows
+  2. Production (multiple machines using Cyrus)
+    - Everyone pulls the same workflows from the repo
+    - Local evolution would diverge across machines
+    - That's a problem if we want collective improvement
+
+  Possible resolution:
+
+  | Stage             | Where                            | How
+               |
+  |-------------------|----------------------------------|------------------
+  -------------|
+  | Development       | In Cyrus repo                    | Committed,
+  versioned          |
+  | Local experiments | ~/.cyrus/experimental-workflows/ | Not committed,
+  local testing  |
+  | Promotion         | Move to repo                     | When experiment
+  proves better |
+
+  For multi-machine evolution:
+
+  If we want machines to contribute back:
+  - Evolved workflows could push to a shared location (separate repo, S3,
+  etc.)
+  - Central system aggregates and evaluates
+  - Best improvements get merged into main Cyrus repo
+
+  But that's complexity for later.
+
+  Simplest start:
+  - Workflows in Cyrus repo
+  - Shared via normal git
+  - Evolution proposes improvements, human approves/commits
+  - Syncs across machines like any code
+
+  The "en masse" problem is real but maybe we solve it when we need it.
+  Start with deliberate, human-approved evolution that commits to the repo.
+
+  Does that seem reasonable for now?
+
+> I'm thinking that there's an architectural one we could simply do which is
+ have a local machine, sorry, a remote machine that Cyrus is actually 
+running on and it's running the same for everyone. I don't want to go down 
+that route but that's an obvious example. The thing I'm thinking is, if I 
+had two systems evolving separately, which is what we're doing, it really 
+comes back to the same question of how do I know if one's good and another 
+one's bad. Because it's the entire workflow that's good, not the individual 
+pieces. Because if you take the piece, it's true, this is good because of 
+that, that's good because of this, you could then look at all of them. So I 
+think it's the tracing, tracking that's going on of individual machines has 
+to be stored somehow. It's interesting that because linear is the source of 
+truth, it's possible to commit the entire Cyrus folder. Because if you 
+commit the Cyrus folder and you commit the repo folder, it means you get the
+ work trees as the bit, you also get all the logging, because the logging is
+ separated up. If you look in the Tilda Cyrus folder and look at the 
+structure, imagine that whole thing being a Git repository and then we just 
+exclude some parts. You'd exclude the environment variables, you'd exclude 
+the primary repo, but you could keep the work trees, you could keep the 
+logs. You say, "Amen" and then all of a sudden you have everyone's work all 
+saved with all the decisions. And what we do is we create a folder in there,
+ which is the... Well, we are thinking about putting it inside Cyrus itself,
+ but let's imagine it's outside in that folder for a second. What if all the
+ evolution and everything, because that's where the data is, it's evolving 
+the workflow, but what I'm thinking is the grading basically specifically. 
+Because if we have a work tree and it's working, we need the grading of that
+ work tree to be in it somehow. But because grading is an evolving process, 
+it's a grade plus a grade plus a grade, like an array of objects as an 
+example, an array of gradings. We're able to say, "This improved this, this 
+improved that, this degraded, that improved." So it's a scorecard, some sort
+ of way of knowing. Because the real question is when you have, let's say, 
+ten different machines running, they're all improving things simultaneously.
+ Some stuff improved, some stuff didn't. When you look at it on mass and go,
+ "I want to pick the better solution." You're looking at it to go, "What 
+should we do and what should happen in AI? I should look at it all and say, 
+"This is what I proposed. Let's mix and match these things that proved 
+success." And you end up with a new workflow, which is a mesh of multiple 
+different results. You see what I mean? So it could be a process of merging 
+that primary repo, looking at the new merge code, analyzing it in GitHub to 
+understand all the things we should be applying that we've now learned from 
+the individual gradings, the individual evolutions. See what I mean? I find 
+that quite fascinating because it's separated evolutions for different 
+reasons, coming up with their own independence. So it's the non-determinism.
+ Looking at it, you see, I mean, it's quite fascinating. So what it brings 
+up is the GitHub itself, but it also brings up how do we grade and trace and
+ track across these systems in a way that makes it easy to understand. 
+Because we have to have the, "This is what I want to do. This is why I want 
+to do it. This is the evolution I'm doing." You know, we're saying this is 
+how we're going to evolve things. If we find a way of describing that in a 
+way, a way of structuring it, shall I not describe, in a way that makes it 
+easy for analysis later and easy to understand. So the grading should also 
+be part of the thing it's doing. Every time it evolves, it should say what 
+it evolved and why. And it should grade what it evolved and therefore it's 
+able to say this improved. The thing with the grading, which I've touched on
+ before, but I'm not sure it's in this discussion, is if we follow the same 
+model, we're getting information on something. We then decide agents make 
+better documents because if we use individual agents, we improve context. So
+ it outputs pre-resourced information, making the planning process better. 
+That's what we're basically saying. Then in amongst that, it does multiple 
+evolutions. We should be able to trace a range of 10 different scores as an 
+example to understand why we believe this is better and we keep evolving. 
+That has to be saved somewhere. The fact that the multiple iterations have 
+to be saved. The primary idea has to be saved. Then I should be able to look
+ at it and say, "These are the things I've decided to do." Now that could be
+ a simple Firebase database. You know, Firebase, I'm thinking because it's 
+distributed, easy to save to. It's a JSON. If it's structured in a way, it 
+makes it easy to use. Another option is use ClickHouse. We're already using 
+it for some stuff. So we can easily create a table. We could use an MCP to 
+connect to it and actually write to it. Could do the same thing for 
+Firebase. The idea is we need to have a somewhere to evaluate and make 
+decisions. How do we do that? Yeah. 
+
+⏺ This is a fascinating architecture. Let me see if I'm tracking:
+
+  The distributed evolution model:
+  Machine A evolves: agents → context improvement
+  Machine B evolves: planning prompt → better structure
+  Machine C evolves: same as A, different approach
+
+  Each records:
+  ├── Hypothesis (what we're trying, why)
+  ├── Iterations (each change made)
+  ├── Grades (scorecard per iteration)
+  └── Outcome (improved/degraded/mixed)
+
+  The merge process:
+  - All machines push their evolution data
+  - AI analyzes across all results
+  - "Machine A's agent approach worked, Machine C's didn't"
+  - "Machine B's planning structure improved X"
+  - Proposes merged workflow taking best from each
+  - Non-determinism creates diversity, selection picks winners
+
+  What needs storing:
+
+  | Data                 | Purpose                                  |
+  |----------------------|------------------------------------------|
+  | Hypothesis           | What we're trying to prove               |
+  | Iterations           | Array of changes over time               |
+  | Grades per iteration | Scorecard showing what improved/degraded |
+  | Reasoning            | Why each decision was made               |
+  | Outcome              | Final assessment                         |
+
+  Storage options:
+  - Firebase: Distributed, JSON, easy MCP
+  - ClickHouse: Already using, structured queries
+  - Either way: MCP writes to it, queryable for analysis
+
+  The structure question:
+  How do we format this so it's:
+  - Easy to write during evolution
+  - Easy to query across machines
+  - Easy for AI to analyze and propose merges
+
+  Maybe something like:
+  {
+    "evolutionId": "uuid",
+    "machineId": "machine-a",
+    "hypothesis": "Specialist agents improve planning context",
+    "target": "workflow/research-agent",
+    "iterations": [
+      {
+        "timestamp": "...",
+        "change": "Added indexing to output",
+        "grades": { "planQuality": 0.7, "contextUsage": 0.8 },
+        "reasoning": "Planning was struggling to find info"
+      }
+    ],
+    "outcome": "improved",
+    "finalGrades": { ... }
+  }
+
+  Is this the shape you're thinking?
+
+> No, it's not what I mean. What I'm saying is have a look at tilde-Cyrus 
+and look at the shape of the folder of the data. What I'm saying is if we 
+made the cyrus folder a repo, excluding some of the repos that are already 
+in there, I've always touched on this, but I don't think you skipped over 
+the point. You didn't look, so you don't understand what I'm saying. Look at
+ it. There are attachments, ENG1, ENG2, ENG13. These are full of 
+attachments. That's wrong. It needs to be an attachment folder. We'll fix 
+that. By pushing that change to cyrus themselves, if they agree with it, to 
+clean up the folder. There's a logs folder and inside the logs folder is all
+ the output of all the agents and everything when cyrus is running that 
+allows us to analyse the effectiveness and stuff so we can evaluate. It's in
+ that folder. If we create a folder in the same place, all the work trees 
+are in here, all the repos are in here. We do not commit the repos, but we 
+do commit the work trees, although we don't need to. We then have one 
+evolution structure. We're saying this is what's happening inside the work 
+tree. cyrus. Because a different machine, if they do ENG, I'm doing ENG13, 
+if they do one, they can't do ENG13. It's already used because linear 
+becomes the source of truth. If they did look at ENG13, it would download my
+ branch, i.e. they'd end up with my code. They wouldn't have my log folder, 
+however. What they'd have is a log folder ENG13 with their changes because 
+they're timestamped. There's no clash. So we could merge theirs and mine 
+together and everything would still work together. The second part of what 
+I'm saying is everything is saved as JSON. So inside the log folder, all 
+those are JSONs. We do a similar structure to it. Our evolution folder, we 
+create an evolution folder. Inside it has a folder for the work tree we're 
+in. And inside that, it saves JSONs as things evolve. And then the idea 
+would be we could have namings or file names, but we come up with a 
+structure basically that makes sense. The point being they're JSONs, which 
+means it's extremely easy to import the whole of... we push it to GitHub, 
+then we import the changes to Firebase or ClickHouse. I'm suggesting 
+ClickHouse because if we want to search it, we can't. If it's in ClickHouse,
+ we can. We then provide an MCP that sorts the whole table and we give it 
+back to evolution. Now evolution can actually search across all the 
+experiments and everything else because now they're in ClickHouse. And if it
+ needs the up-to-date thing, it simply pushes the repo and the local machine
+ to get the current stuff. It wouldn't have the other ones, but if they push
+ it on a regular basis, it would. You see the point? So everyone is 
+evolving. There is a common structure. There is no clash. There's a way of 
+keeping it very simple, which means we're working locally with local 
+structures. When we want to get the point of searching, we could put it in 
+ClickHouse to make it searchable. It's also possible to make it searchable 
+local. I presume locally works as well. You get what I'm saying. That's what
+ I'm thinking. 
+
+⏺ Let me look at the actual structure:
+
+⏺ Bash(ls -la ~/.cyrus/)
+  ⎿  total 128                                                 
+     drwxr-xr-x@  37 stuartfenton  staff   1184 Nov 27 21:47 .
+     drwxr-x---+ 100 stuartfenton  staff   3200 Dec  1 19:48 ..
+     … +42 lines (ctrl+o to expand)
+
+⏺ Bash(ls -la ~/.cyrus/logs/ && echo "---" && ls -la ~/.cyrus/ENG-13/)
+  ⎿  total 24                                                  
+     drwxr-xr-x@  20 stuartfenton  staff    640 Nov 27 21:47 .
+     drwxr-xr-x@  37 stuartfenton  staff   1184 Nov 27 21:47 ..
+     … +23 lines (ctrl+o to expand)
+
+⏺ Bash(ls ~/.cyrus/logs/ENG-13/ | head -20 && echo "---" && ls
+      ~/.cyrus/worktrees/)
+  ⎿ session-03624390-f34e-4339-b8fb-28ecac7c7d0c-2025-11-15T21-25-35-234Z.j
+    sonl
+    session-03624390-f34e-4339-b8fb-28ecac7c7d0c-2025-11-15T21-25-35-234Z.m
+    … +53 lines (ctrl+o to expand)
+
+
+
+⏺ Now I see it. The structure is already there:
+
+  ~/.cyrus/
+  ├── logs/
+  │   └── ENG-13/
+  │       └── session-{uuid}-{timestamp}.jsonl  ← Timestamped, no clash
+  ├── worktrees/
+  │   └── ENG-13/
+  ├── repos/                                     ← Exclude from git
+  ├── ENG-13/attachments/                        ← Should be
+  attachments/ENG-13
+  └── evolution/                                 ← NEW: Same pattern
+      └── ENG-13/
+          ├── hypothesis-{timestamp}.json
+          ├── iteration-001-{timestamp}.json
+          ├── grade-{timestamp}.json
+          └── ...
+
+  Why this works:
+  - Logs are already timestamped per session - no clash
+  - Different machine runs ENG-13, different timestamps
+  - Merge = just add files together
+  - Linear is source of truth for ENG-* (no duplicate issues)
+  - Everything JSON/JSONL - easy to import
+
+  The git repo approach:
+  ~/.cyrus/.gitignore:
+  repos/
+  .env*
+  config.json
+  secure-configs/
+
+  Commit everything else. Push. Merge other machines' work. Import to
+  ClickHouse when you want to search across all.
+
+  Evolution folder follows the same pattern - per-issue folders, timestamped
+   JSON files. When we want to analyze:
+  1. Push all machines to shared repo
+  2. Import JSON files to ClickHouse
+  3. MCP queries ClickHouse
+  4. AI analyzes across all experiments
+
+  Simple. No special infrastructure. Just files and git.
+
+> Perfect. Okay, let's update the primary 07 evolution document with this 
+information. Try to be clear, try not to be vague, but don't have anything 
+in there which is not this. Don't say we're changing something because, 
+don't say we're doing this instead of that. Just say what we're actually 
+doing. So this document should be the research of what to do and why. That's
+ what this document is, it shouldn't contain anything else. Do you agree? 
+
+⏺ Yes, I agree. Let me rewrite the document to be clear about what we're
+  doing and why, without comparisons or hedging.
+
+⏺ Write(research/07-evolution-architecture-research.md)
+  ⎿  Error writing file
+
+⏺ Read(research/07-evolution-architecture-research.md)
+  ⎿  Read 698 lines
+
+⏺ Write(research/07-evolution-architecture-research.md)
+  ⎿  Updated research/07-evolution-architecture-research.md with 170       
+     additions and 584 removals
+         1 -  # Evolution Architecture Research: How We Hook Into Cyrus
+         1 +  # Evolution Architecture Research
+         2    
+         3 -  **Document Purpose:** Capture the architectural 
+           - understanding from design discussions about how the 
+           - Evolution package extends Cyrus without forking it.
+         3 +  **Purpose:** Define how the Evolution package extends Cyrus
+           +  to enable self-improving workflows.
+         4    
+         5    **Created:** 2025-12-01
+         6 -  **Status:** Research - ready for planning
+         6 +  **Status:** Research complete
+         7    
+         8    ---
+         9    
+        10 -  ## 1. Core Principle: Extension, Not Fork
+        10 +  ## 1. The Evolution Package
+        11    
+        12 -  The Evolution package is a **new package within
+           -   the Cyrus monorepo** that:
+        13 -  - Depends on Cyrus packages (edge-worker, claude-runner, 
+           - core)
+        14 -  - Uses the same code style, testing patterns, structure
+        15 -  - Hooks into Cyrus via minimal extension points
+        16 -  - Does NOT modify Cyrus core except for necessary hooks
+        17 -  - Allows pulling upstream Cyrus updates
+        12 +  Evolution is a new package in the Cyrus monorepo:
+           +   `packages/evolution/`
+        13    
+        14 +  It hooks into Cyrus, extending its capabilities. As 
+           + upstream Cyrus updates, we pull those updates. Our code 
+           + lives in the evolution package.
+        15 +  
+        16    ```
+        17 -  cyrus/                              (upstream - pull 
+           - updates)
+        17 +  cyrus/
+        18    ├── packages/
+        19 -  │   ├── core/                       (don't modify)
+        20 -  │   ├── edge-worker/                (minimal hooks added)
+        21 -  │   ├── claude-runner/              (don't modify)
+        22 -  │   │
+        23 -  │   └── evolution/                  (OUR PACKAGE)
+        24 -  │       ├── src/                    (new code)
+        25 -  │       ├── workflows/              (workflow definitions)
+        26 -  │       ├── prompts/                (evolved prompts)
+        27 -  │       └── package.json            (depends on cyrus 
+           - packages)
+        19 +  │   ├── core/                  (upstream)
+        20 +  │   ├── edge-worker/           (upstream)
+        21 +  │   ├── claude-runner/         (upstream)
+        22 +  │   └── evolution/             (our package)
+        23    ```
+        24    
+        25    ---
+        26    
+        27 -  ## 2. Two Contexts: Development vs Production
+        27 +  ## 2. Two Contexts
+        28    
+        29 -  ### Context 1: Cyrus Working ON the Cyrus Repo 
+           - (Development)
+        29 +  ### Development: Cyrus Working on Cyrus
+        30    
+        31 -  ```
+        32 -  Cyrus sees everything:
+        33 -  ├── packages/evolution/src/...     ← Can read, modify, 
+           - improve
+        34 -  ├── packages/edge-worker/...       ← Can read, modify
+        35 -  ├── workflows/...                  ← Can create new ones
+        36 -  └── All code is visible
+        31 +  Cyrus sees everything. It can read and modify the evolution
+           +  package code, create new workflows, improve prompts. This 
+           + is where we develop and improve the system. Dogfooding.
+        32    
+        33 -  This is where we improve the evolution package itself.
+        34 -  Cyrus improves Cyrus. Dogfooding.
+        35 -  ```
+        33 +  ### Production: Cyrus Running on Other Repos
+        34    
+        35 -  In this mode:
+        36 -  - Cyrus is assigned issues about improving Cyrus
+        37 -  - It can see and modify the evolution package code
+        38 -  - It can create new workflows, new prompts
+        39 -  - The separation of concerns does NOT apply (it's just 
+           - coding)
+        35 +  Cyrus runs with evolution on target repositories. 
+           + Separation of concerns applies. The running system cannot 
+           + see its own machinery. It executes workflows, produces 
+           + outputs. Evolution grades those outputs in separate 
+           + sessions.
+        36    
+        37 -  ### Context 2: Cyrus Deployed on Other Repos (Production)
+        38 -  
+        39 -  ```
+        40 -  Cyrus runs with evolution, but:
+        41 -  ├── Customer repo code             ← Can see
+        42 -  ├── Logs from this run             ← Evolution can read
+        43 -  ├── Workflow outputs               ← Evolution can grade
+        44 -  └── Evolution internals            ← CANNOT modify during 
+           - run
+        45 -  
+        46 -  Separation of concerns applies.
+        47 -  Can only see outputs, not its own machinery.
+        48 -  ```
+        49 -  
+        50 -  In this mode:
+        51 -  - Cyrus is running on customer/target repos
+        52 -  - It executes the deployed workflow
+        53 -  - Evolution grades outputs AFTER the run
+        54 -  - Different sessions ensure no cheating
+        55 -  
+        37    ---
+        38    
+        39 -  ## 3. Dogfooding: Everything is Cyrus
+        39 +  ## 3. Workflows
+        40    
+        41 -  **Key insight: We don't build a new system. We use Cyrus to
+           -  run everything.**
+        41 +  Workflows are manually designed sequences of steps. We 
+           + create them through discussion and coding. They are not 
+           + AI-evolved.
+        42    
+        43 -  | Layer | What It Is | How It Runs |
+        44 -  |-------|------------|-------------|
+        45 -  | Task Execution | Do the actual work | Cyrus session with 
+           - task workflow |
+        46 -  | Grading | Evaluate the output | Cyrus session with 
+           - grading workflow |
+        47 -  | Meta-Grading | Evaluate the graders | Cyrus session with 
+           - meta-grading workflow |
+        48 -  | Evolution | Improve prompts/workflows | Cyrus session 
+           - with evolution workflow |
+        43 +  A workflow defines the structure:
+        44 +  - What steps run
+        45 +  - In what order
+        46 +  - With what checkpoints
+        47    
+        48 -  Each layer is just Cyrus running different prompts. The 
+           - "can't cheat" guarantee comes from **separate sessions** - 
+           - each session can only read outputs from previous sessions, 
+           - not modify its own evaluation.
+        48 +  Example: A TDD workflow has three steps running as separate
+           +  sessions:
+        49 +  1. Write tests
+        50 +  2. Verify tests pass
+        51 +  3. Write implementation code
+        52    
+        53 -  ```
+        54 -  Session 1: Cyrus runs "task workflow"
+        55 -      → outputs code/results
+        53 +  When we want to try a new approach, we design a new 
+           + workflow. The orchestrator chooses which workflow to run 
+           + based on the Linear issue.
+        54    
+        55 -  Session 2: Cyrus runs "grading workflow"
+        56 -      → reads session 1 outputs
+        57 -      → outputs grades
+        58 -      → CAN'T modify session 1
+        55 +  ### Workflow Format
+        56    
+        57 -  Session 3: Cyrus runs "meta-grading workflow"
+        58 -      → reads session 2 outputs
+        59 -      → outputs grade-of-grades
+        60 -      → CAN'T modify sessions 1 or 2
+        57 +  Workflows are TypeScript files with JSDoc descriptions:
+        58    
+        59 -  Session 4: Cyrus runs "evolution workflow"
+        60 -      → reads all grades
+        61 -      → outputs new prompts/workflows
+        62 -      → CAN'T modify previous sessions
+        63 -  ```
+        64 -  
+        65 -  ---
+        66 -  
+        67 -  ## 4. What Evolution Controls
+        68 -  
+        69 -  Evolution doesn't just control workflow sequence - it 
+           - controls **everything that determines behavior**:
+        70 -  
+        71 -  ### 4.1 Everything Can Evolve
+        72 -  
+        73 -  Don't artificially limit what can evolve. If it affects 
+           - behavior and can be improved, it's a candidate:
+        74 -  
+        75 -  | What | Example | How It's Expressed |
+        76 -  |------|---------|-------------------|
+        77 -  | **Prompts** | Subroutine instructions | `.md` files |
+        78 -  | **Workflows** | Step sequences, parameters | 
+           - `workflow.json` |
+        79 -  | **Agents** | Specialist prompt + context + tools + 
+           - behavior | Agent definitions |
+        80 -  | **Commands** | Claude Code slash commands | 
+           - `.claude/commands/*.md` |
+        81 -  | **MCPs** | Tool configurations, which servers to use | 
+           - MCP config |
+        82 -  | **Grading criteria** | What "good" means | Grader prompts
+           -  |
+        83 -  | **Split testing** | How we compare variants | Testing 
+           - config |
+        84 -  | **Code sequences** | How we chain operations | Procedure 
+           - definitions |
+        85 -  | **The evolution system** | How we evolve things | 
+           - Evolution prompts/code |
+        86 -  
+        87 -  An agent isn't just a prompt - it's prompt + context + 
+           - specialization + tools + behavior. But it CAN still evolve.
+        88 -  
+        89 -  **The principle:** Anything that determines system behavior
+           -  is evolvable.
+        90 -  
+        91 -  ### 4.2 Workflow Config (workflow.json)
+        92 -  
+        93 -  **Critical: Start from what exists.** The first workflow 
+           - must replicate the CURRENT Cyrus system, not invent 
+           - something new. Then we improve from there.
+        94 -  
+        95 -  Current Cyrus workflow (what we replicate first):
+        96 -  ```json
+        97 -  {
+        98 -    "name": "full-development",
+        99 -    "version": "1.0.0",
+       100 -    "description": "Replicates current Cyrus full-development
+           -  procedure",
+       101 -    "steps": [
+       102 -      {
+       103 -        "id": "coding-activity",
+       104 -        "prompt": "subroutines/coding-activity.md",
+       105 -        "description": "Implement the requested changes"
+       106 -      },
+       107 -      {
+       108 -        "id": "verifications",
+       109 -        "prompt": "subroutines/verifications.md",
+       110 -        "description": "Run tests, linting, type checking"
+       111 -      },
+       112 -      {
+       113 -        "id": "git-gh",
+       114 -        "prompt": "subroutines/git-gh.md",
+       115 -        "description": "Commit and create PR"
+       116 -      },
+       117 -      {
+       118 -        "id": "concise-summary",
+       119 -        "prompt": "subroutines/concise-summary.md",
+       120 -        "description": "Summarize what was done"
+       121 -      }
+       122 -    ]
+        59 +  ```typescript
+        60 +  /**
+        61 +   * TDD Development Workflow
+        62 +   *
+        63 +   * Enforces test-first development by running tests
+        64 +   * before implementation in separate sessions.
+        65 +   */
+        66 +  export async function tddWorkflow(context: WorkflowContext)
+           +  {
+        67 +    const tests = await runAgent('write-tests', context);
+        68 +    await verifyTestsPass(tests);
+        69 +    const implementation = await runAgent('implement', { 
+           + ...context, tests });
+        70 +    return implementation;
+        71    }
+        72    ```
+        73    
+        74 -  Then we evolve by adding layers (see section 5.4).
+        74 +  TypeScript is more powerful than JSON configuration. No 
+           + interpreter needed. Full language capabilities for 
+           + conditionals, loops, parallel execution.
+        75    
+        76 -  ### 4.3 Prompt Files (prompts/*.md)
+        77 -  
+        78 -  Each step references a prompt file that Evolution can 
+           - modify:
+        79 -  
+        80 -  ```
+        81 -  evolution/workflows/deep-development/
+        82 -  ├── workflow.json           ← Flow control
+        83 -  └── prompts/
+        84 -      ├── research.md         ← What research step does
+        85 -      ├── planning.md         ← What planning step does
+        86 -      ├── implement.md        ← What implementation step does
+        87 -      └── verify.md           ← What verification step does
+        88 -  ```
+        89 -  
+        90 -  ### 4.4 What Evolution Can Change
+        91 -  
+        92 -  **Workflow changes:**
+        93 -  - Add/remove steps
+        94 -  - Reorder steps
+        95 -  - Change step parameters (iterations, approvals)
+        96 -  - Add conditional logic
+        97 -  - Add parallel execution
+        98 -  
+        99 -  **Prompt changes:**
+       100 -  - Add instructions ("always consider error handling")
+       101 -  - Remove instructions (if causing problems)
+       102 -  - Clarify vague instructions
+       103 -  - Add examples
+       104 -  - Change tone/style
+       105 -  - Add constraints
+       106 -  
+       107 -  **Grader changes:**
+       108 -  - Adjust what constitutes "good"
+       109 -  - Add/remove evaluation criteria
+       110 -  - Change scoring weights
+       111 -  
+        76    ---
+        77    
+        78 -  ## 5. The Grading System
+        78 +  ## 4. Evolution
+        79    
+        80 -  ### 5.1 Why Graders Need Graders
+        80 +  Evolution improves parts within a workflow. The workflow 
+           + structure stays fixed. The prompts, agents, and behaviors 
+           + within it evolve.
+        81    
+        82 -  Grading is about **evolution**, not preventing cheating.
+        82 +  ### What Evolves
+        83    
+        84 -  We grade the task output to know if it's good. But if we 
+           - stop there:
+        85 -  - We can't improve the graders
+        86 -  - We don't know if grading criteria are correct
+        87 -  - Graders might miss important aspects
+        84 +  Anything that affects system behavior:
+        85 +  - Prompts (what agents are told to do)
+        86 +  - Agents (specialist prompts with context and tools)
+        87 +  - Commands (Claude Code slash commands)
+        88 +  - MCPs (tool configurations)
+        89 +  - Grading criteria (what "good" means)
+        90 +  - Output formats (how data is structured)
+        91    
+        92 -  Solution: **Grade the graders so we can evolve them too**
+        92 +  ### How Evolution Works
+        93    
+        94 -  Everything in the system needs to evolve:
+        95 -  - Task execution → graded → evolve task prompts
+        96 -  - Grading → meta-graded → evolve grader prompts
+        97 -  - Meta-grading → could go further if needed
+        94 +  1. State a hypothesis in plain language: "Specialist agents
+           +  will improve planning by providing better context"
+        95 +  2. Define measurable targets: plan quality score, context 
+           + usage metrics
+        96 +  3. AI proposes changes to achieve the target
+        97 +  4. Test the changes
+        98 +  5. Grade the results
+        99 +  6. Keep improvements, discard regressions
+       100    
+       101 -  The separate sessions ensure isolation, but the PURPOSE is 
+           - evolution at every level.
+       101 +  ### Evolution Proposes Solutions
+       102    
+       103 -  ### 5.2 Grading Hierarchy
+       103 +  Evolution is intelligent improvement. It understands the 
+           + goal, analyzes what's not working, and proposes solutions.
+       104    
+       105 -  ```
+       106 -  Level 0: Task outputs (code, PRs, results)
+       107 -             │
+       108 -             ▼
+       109 -  Level 1: Graders (prompted) - "Was this output good?"
+       110 -             │
+       111 -             ▼
+       112 -  Level 2: Meta-graders - "Was the grader correct?"
+       113 -             │
+       114 -             ▼
+       115 -  Level 3: (Could go further if needed)
+       116 -  ```
+       105 +  Example: "Planning struggles to find information. Proposal:
+           +  Add indexing to research agent output. Structure output as 
+           + searchable JSON alongside markdown."
+       106    
+       107 -  ### 5.3 Grader Workflows
+       107 +  This changes what the agent does, not just text. But the 
+           + workflow structure remains the same.
+       108    
+       109 -  Graders are just more workflows:
+       109 +  ---
+       110    
+       111 -  ```
+       112 -  evolution/workflows/
+       113 -  ├── task/                   ← Task execution workflows
+       114 -  │   └── deep-development/
+       115 -  ├── grading/                ← Grading workflows
+       116 -  │   ├── code-quality/
+       117 -  │   ├── plan-quality/
+       118 -  │   └── outcome/
+       119 -  └── meta-grading/           ← Grade-the-graders workflows
+       120 -      └── grader-accuracy/
+       121 -  ```
+       111 +  ## 5. Specialist Agents
+       112    
+       113 -  Each is a separate Cyrus session with its own prompts.
+       113 +  Agents have their own context window. They read extensively
+           +  and return summaries to the orchestrator.
+       114    
+       115 -  ### 5.4 Layered Evolution Strategy
+       115 +  ### Why Agents
+       116    
+       117 -  **We don't evolve everything at once.** We add layers 
+           - incrementally:
+       117 +  The orchestrator needs information but has limited context.
+           +  An agent:
+       118 +  - Reads all relevant docs, code, patterns
+       119 +  - Processes in its own context
+       120 +  - Returns a summary (not the full content)
+       121 +  - Keeps orchestrator context clean
+       122    
+       123 -  ```
+       124 -  Layer 1: Documentation Agents
+       125 -           ├── Hypothesis: "Better docs → better planning"
+       126 -           ├── Create specialist agents (Postgres, Auth, 
+           - etc.)
+       127 -           ├── Agents research & document the codebase
+       128 -           └── Evolve agents until docs are good
+       123 +  ### What Agents Do
+       124    
+       125 -  Layer 2: Planning Process
+       126 -           ├── Hypothesis: "Better planning → better code"
+       127 -           ├── Planning uses docs from Layer 1
+       128 -           ├── Evolve planning prompts
+       129 -           └── Grading checks plan quality
+       125 +  1. Research: Read docs, code, external resources
+       126 +  2. Document: Write findings to docs folder
+       127 +  3. Update: Check if documentation is stale, refresh it
+       128 +  4. Respond: Answer queries about their domain
+       129    
+       130 -  Layer 3: Implementation
+       131 -           ├── Hypothesis: "Plans + docs → fewer errors"
+       132 -           ├── Implementation uses docs + plans
+       133 -           └── Evolve implementation prompts
+       130 +  Example agents: Postgres patterns, Auth flows, API 
+           + structure, Testing patterns.
+       131    
+       132 -  Layer 4: ... add more as we go
+       133 -  ```
+       132 +  ### Agent Evolution
+       133    
+       134 -  Each layer builds on previous layers. When agents improve, 
+           - planning automatically benefits.
+       134 +  Agents evolve. If an agent's output isn't helping planning:
+       135 +  - Analyze what's missing
+       136 +  - Propose changes (add indexing, structure differently, 
+           + include more detail)
+       137 +  - Test and grade
+       138 +  - Keep improvements
+       139    
+       140 -  ### 5.5 Evolution with Propositions
+       141 -  
+       142 -  Every evolution needs a clear **proposition** (hypothesis):
+       143 -  
+       144 -  ```
+       145 -  Proposition 1.0:
+       146 -    "Creating specialist documentation agents will improve 
+           - planning"
+       147 -  
+       148 -  Proposition 1.1 (evolved):
+       149 -    "Creating specialist documentation agents will improve 
+           - planning,
+       150 -     AND the docs should be structured in JSON/indexable 
+           - format
+       151 -     so AI can query specific information"
+       152 -  ```
+       153 -  
+       154 -  **Evolving propositions, not just agents:**
+       155 -  - Don't have two evolutions override each other
+       156 -  - If you want to improve agent for reason X and reason Y
+       157 -  - Combine: evolve the proposition to include both goals
+       158 -  - Then evolve the agent to meet the combined proposition
+       159 -  
+       160 -  This prevents conflicts where one improvement undoes 
+           - another.
+       161 -  
+       140    ---
+       141    
+       142 -  ## 6. Specialist Agents
+       142 +  ## 6. Grading System
+       143    
+       144 -  ### 6.1 Why Agents, Not Commands
+       144 +  Everything evolves, including graders.
+       145    
+       146 -  | Aspect | Command | Agent |
+       147 -  |--------|---------|-------|
+       148 -  | Context | Shares orchestrator context | Has its own 
+           - context window |
+       149 -  | Depth | Limited by context budget | Can read extensive 
+           - docs |
+       150 -  | Return | Full output to orchestrator | Summary only |
+       151 -  | Specialty | General purpose | Domain-specific |
+       146 +  ### Three Levels
+       147    
+       148 -  **The key insight:** Agents don't pollute the 
+           - orchestrator's context.
+       148 +  1. Task outputs: The code, PRs, results
+       149 +  2. Graders: Evaluate task outputs
+       150 +  3. Meta-graders: Evaluate the graders
+       151    
+       152 -  ```
+       153 -  Orchestrator: "I need info about our Postgres patterns"
+       154 -      │
+       155 -      ├── Command approach (bad):
+       156 -      │   - Reads all Postgres docs into orchestrator context
+       157 -      │   - Context fills up
+       158 -      │   - Less room for actual planning
+       159 -      │
+       160 -      └── Agent approach (good):
+       161 -          - Postgres agent has its own context
+       162 -          - Reads all docs, code, patterns
+       163 -          - Returns 500-word summary to orchestrator
+       164 -          - Orchestrator context stays clean
+       165 -  ```
+       152 +  Meta-graders ensure graders are doing a good job. Without 
+           + them, we cannot improve grading criteria.
+       153    
+       154 -  ### 6.2 What Specialist Agents Do
+       154 +  ### Separate Sessions
+       155    
+       156 -  Each agent is responsible for:
+       157 -  1. **Researching** - Reading docs, code, external resources
+       158 -  2. **Documenting** - Writing to docs folder
+       159 -  3. **Updating** - Checking if docs are stale, refreshing
+       160 -  4. **Responding** - Answering queries about its domain
+       156 +  Each grading level runs in its own session:
+       157 +  - Session 1: Task execution
+       158 +  - Session 2: Grade the output
+       159 +  - Session 3: Grade the grader
+       160    
+       161 -  Example agents:
+       162 -  ```
+       163 -  agents/
+       164 -  ├── postgres/           ← Database patterns, queries, 
+           - schema
+       165 -  ├── auth/               ← Authentication flow, JWT, 
+           - sessions
+       166 -  ├── api/                ← REST endpoints, validation
+       167 -  ├── testing/            ← Test patterns, fixtures, mocks
+       168 -  └── deployment/         ← CI/CD, Docker, environments
+       169 -  ```
+       161 +  Each session only reads outputs from previous sessions. 
+           + This isolation enables independent evolution at each level.
+       162    
+       163 -  ### 6.3 Agent Lifecycle
+       164 -  
+       165 -  ```
+       166 -  Task starts
+       167 -      │
+       168 -      ▼
+       169 -  Orchestrator calls specialist agents
+       170 -      │
+       171 -      ├── Agent checks: Is my documentation current?
+       172 -      │   ├── Yes → Return summary from cached docs
+       173 -      │   └── No → Research, update docs, return summary
+       174 -      │
+       175 -      ▼
+       176 -  Orchestrator receives summaries (small context)
+       177 -      │
+       178 -      ▼
+       179 -  Planning uses summaries + can query agents for details
+       180 -      │
+       181 -      ▼
+       182 -  Implementation proceeds with accurate information
+       183 -  ```
+       184 -  
+       185 -  ### 6.4 Evolving Agents
+       186 -  
+       187 -  Agents themselves evolve:
+       188 -  
+       189 -  ```
+       190 -  Evolution observes:
+       191 -    "Agent returned info about Postgres queries,
+       192 -     but the code failed because it used wrong connection 
+           - pooling"
+       193 -  
+       194 -  Evolution hypothesis:
+       195 -    "Agent needs to document connection pooling patterns"
+       196 -  
+       197 -  Evolution action:
+       198 -    Update agent prompt to include connection pooling 
+           - research
+       199 -  
+       200 -  Next run:
+       201 -    Agent documents connection pooling
+       202 -    Planning has better info
+       203 -    Code works
+       204 -  ```
+       205 -  
+       206 -  The evolution system improves agents just like it improves 
+           - any other prompt.
+       207 -  
+       163    ---
+       164    
+       165 -  ## 7. Triggering Evolution
+       165 +  ## 7. Propositions
+       166    
+       167 -  ### 7.1 Manual Triggers (Development Phase)
+       167 +  Every evolution has a proposition: a hypothesis about what 
+           + will improve and why.
+       168    
+       169 -  When building and testing:
+       170 -  - Run commands manually to build knowledge base
+       171 -  - Manually trigger grading after runs
+       172 -  - Manually trigger evolution to improve prompts
+       173 -  - Human review at checkpoints
+       169 +  Example: "Creating specialist documentation agents will 
+           + improve planning, because planning will have accurate, 
+           + indexed information."
+       170    
+       171 -  ### 7.2 Automatic Triggers (Production Phase)
+       171 +  ### Combining Propositions
+       172    
+       173 -  After every Cyrus run:
+       174 -  1. Evolution reads logs from the run
+       175 -  2. Triggers grading workflow
+       176 -  3. Triggers meta-grading workflow
+       177 -  4. Triggers evolution workflow if grades indicate problems
+       178 -  5. Writes improved prompts/workflows
+       173 +  When multiple improvements target the same component, 
+           + combine them into one proposition. Evolve the proposition, 
+           + then evolve the component to meet it.
+       174    
+       175 -  ### 7.3 The Improvement Loop
+       175 +  This prevents conflicting improvements from overriding each
+           +  other.
+       176    
+       177 -  ```
+       178 -  ┌──────────────────────────────────────────────────────────
+           - ───┐
+       179 -  │  1. Cyrus runs task workflow                             
+           -    │
+       180 -  │     → outputs to logs                                    
+           -    │
+       181 -  └──────────────────────────────────────────────────────────
+           - ───┘
+       182 -                  │
+       183 -                  ▼
+       184 -  ┌──────────────────────────────────────────────────────────
+           - ───┐
+       185 -  │  2. Evolution triggers grading workflow                  
+           -    │
+       186 -  │     → reads logs                                         
+           -    │
+       187 -  │     → outputs grades                                     
+           -    │
+       188 -  └──────────────────────────────────────────────────────────
+           - ───┘
+       189 -                  │
+       190 -                  ▼
+       191 -  ┌──────────────────────────────────────────────────────────
+           - ───┐
+       192 -  │  3. Evolution triggers meta-grading workflow             
+           -    │
+       193 -  │     → reads grades                                       
+           -    │
+       194 -  │     → validates grader quality                           
+           -    │
+       195 -  └──────────────────────────────────────────────────────────
+           - ───┘
+       196 -                  │
+       197 -                  ▼
+       198 -  ┌──────────────────────────────────────────────────────────
+           - ───┐
+       199 -  │  4. Evolution triggers improvement workflow              
+           -    │
+       200 -  │     → reads all grades                                   
+           -    │
+       201 -  │     → hypothesizes changes                               
+           -    │
+       202 -  │     → writes new prompts/workflows                       
+           -    │
+       203 -  └──────────────────────────────────────────────────────────
+           - ───┘
+       204 -                  │
+       205 -                  ▼
+       206 -  ┌──────────────────────────────────────────────────────────
+           - ───┐
+       207 -  │  5. New version deployed                                 
+           -    │
+       208 -  │     → next task run uses improved system                 
+           -    │
+       209 -  │     → loop continues                                     
+           -    │
+       210 -  └──────────────────────────────────────────────────────────
+           - ───┘
+       211 -  ```
+       212 -  
+       177    ---
+       178    
+       179 -  ## 8. Hook Points for Evolution Package
+       179 +  ## 8. Linear Integration
+       180    
+       181 -  Based on document 06 (Hook Points Analysis), these are what
+           -  Evolution needs:
+       181 +  Linear is the source of truth. Issue names control what 
+           + happens.
+       182    
+       183 -  ### 8.1 Essential Hooks (Minimal Cyrus Changes)
+       183 +  ### Workflow Selection
+       184    
+       185 -  | Hook | Purpose | Lines to Add |
+       186 -  |------|---------|--------------|
+       187 -  | Prompt Path Override | Load evolved prompts instead of 
+           - built-in | ~10 lines |
+       188 -  | Per-Subroutine Model | Use different models per step | 
+           - ~15 lines |
+       189 -  | Metrics Collection | Capture outcomes for grading | ~50 
+           - lines |
+       185 +  The orchestrator reads the issue and selects a workflow. 
+           + Naming conventions control which workflow runs:
+       186    
+       187 -  ### 8.2 How Evolution Uses the Hooks
+       187 +  - ENG-13-W1: Run workflow W1
+       188 +  - ENG-13-W2: Run workflow W2
+       189    
+       190 -  ```typescript
+       191 -  // Evolution package provides:
+       190 +  When instructed "run with W1 and W2 in parallel," the 
+           + orchestrator creates these issues.
+       191    
+       192 -  // 1. Custom prompt loader
+       193 -  const promptLoader = async (subroutine: 
+           - SubroutineDefinition) => {
+       194 -    const evolvedPath = getEvolvedPromptPath(subroutine);
+       195 -    if (await exists(evolvedPath)) {
+       196 -      return readFile(evolvedPath, 'utf-8');
+       197 -    }
+       198 -    return null; // fall through to built-in
+       199 -  };
+       192 +  ### Sub-issues
+       193    
+       194 -  // 2. Workflow executor
+       195 -  const executeWorkflow = async (workflowPath: string, 
+           - context: Context) => {
+       196 -    const workflow = loadWorkflow(workflowPath);
+       197 -    for (const step of workflow.steps) {
+       198 -      await executeStep(step, context);
+       199 -    }
+       200 -  };
+       194 +  When Cyrus breaks up work, it creates sub-issues following 
+           + the same pattern:
+       195 +  - ENG-13-W1 (root)
+       196 +  - ENG-13-W1-A (sub-task)
+       197 +  - ENG-13-W1-B (sub-task)
+       198    
+       199 -  // 3. Grading orchestrator
+       200 -  const gradeRun = async (sessionLogs: SessionLogs) => {
+       201 -    // Run grading workflow in separate session
+       202 -    const grades = await 
+           - executeWorkflow('grading/code-quality', { logs: sessionLogs 
+           - });
+       199 +  Worktrees and tracing work exactly as before. The naming 
+           + tells us which workflow was used.
+       200    
+       201 -    // Run meta-grading in another separate session
+       202 -    const metaGrades = await 
+           - executeWorkflow('meta-grading/grader-accuracy', { grades });
+       201 +  ---
+       202    
+       203 -    return { grades, metaGrades };
+       204 -  };
+       205 -  ```
+       203 +  ## 9. Hooks
+       204    
+       205 -  ### 8.3 What Evolution DOESN'T Need
+       205 +  The evolution package hooks into Cyrus by loading modified 
+           + files.
+       206    
+       207 -  - Parallel worktree execution (use sub-issues instead)
+       208 -  - MCP customization (existing config is sufficient)
+       209 -  - Prompt assembly modification (just override whole 
+           - prompts)
+       207 +  The hook mechanism is file substitution. Evolution decides 
+           + which version of a file to load. The function signature is 
+           + the same. The behavior is different.
+       208    
+       209    ---
+       210    
+       211 -  ## 9. Building Knowledge Base
+       211 +  ## 10. Storage
+       212    
+       213 -  Before evolution can improve, it needs knowledge. **This is
+           -  where specialist agents come in** (see section 6).
+       213 +  Everything is stored in the `~/.cyrus/` folder.
+       214    
+       215 -  ### 9.1 Knowledge Sources
+       215 +  ### Current Structure
+       216    
+       217 -  | Source | What It Provides | Who Gathers It |
+       218 -  |--------|-----------------|----------------|
+       219 -  | Codebase exploration | Patterns, conventions, 
+           - architecture | Specialist agents |
+       220 -  | Existing docs | What's already documented | Specialist 
+           - agents |
+       221 -  | External resources | Library docs, APIs, frameworks | 
+           - Specialist agents |
+       222 -  | Run logs | What worked, what failed | Evolution system |
+       223 -  | Grader outputs | Quality assessments | Grading workflows 
+           - |
+       224 -  | Human feedback | Corrections, preferences | Manual input 
+           - |
+       225 -  
+       226 -  ### 9.2 Knowledge Building Workflow
+       227 -  
+       228 -  Run before task execution to gather context:
+       229 -  
+       217    ```
+       218 -  research workflow:
+       219 -  ├── Explore codebase patterns
+       220 -  ├── Read existing documentation
+       221 -  ├── Check lessons-learned folder
+       222 -  └── Output: context document for planning
+       218 +  ~/.cyrus/
+       219 +  ├── logs/
+       220 +  │   └── ENG-13/
+       221 +  │       └── session-{uuid}-{timestamp}.jsonl
+       222 +  ├── worktrees/
+       223 +  │   └── ENG-13/
+       224 +  ├── repos/
+       225 +  └── config.json
+       226    ```
+       227    
+       228 -  This knowledge makes planning better:
+       229 -  - Quality in → Quality out
+       230 -  - Better context → Better plans → Better code
+       228 +  Logs are per-issue folders with timestamped JSON files. 
+           + Different machines have different timestamps. No clash.
+       229    
+       230 -  ---
+       230 +  ### Evolution Folder
+       231    
+       232 -  ## 10. Commands vs Subroutines
+       232 +  Add an evolution folder following the same pattern:
+       233    
+       234 -  Evolution can mix both:
+       234 +  ```
+       235 +  ~/.cyrus/
+       236 +  ├── evolution/
+       237 +  │   └── ENG-13/
+       238 +  │       ├── hypothesis-{timestamp}.json
+       239 +  │       ├── iteration-001-{timestamp}.json
+       240 +  │       ├── grade-{timestamp}.json
+       241 +  │       └── outcome-{timestamp}.json
+       242 +  └── logs/
+       243 +      └── ...
+       244 +  ```
+       245    
+       246 -  ### 10.1 Commands (Claude Code native)
+       246 +  ### Multi-Machine Sync
+       247    
+       248 -  - Stored in `.claude/commands/`
+       249 -  - Can be run manually for testing
+       250 -  - Easy to iterate on
+       251 -  - Good for: research, exploration, one-off tasks
+       248 +  Make `~/.cyrus/` a git repository. Exclude secrets:
+       249    
+       250 -  ### 10.2 Subroutines (Cyrus native)
+       251 -  
+       252 -  - Defined in procedures
+       253 -  - Automated execution
+       254 -  - Integrated with Linear
+       255 -  - Good for: structured workflows, production
+       256 -  
+       257 -  ### 10.3 Why Mix Them
+       258 -  
+       259 -  | Use Commands For | Use Subroutines For |
+       260 -  |------------------|---------------------|
+       261 -  | Testing new ideas manually | Production workflows |
+       262 -  | Ad-hoc research | Automated execution |
+       263 -  | Quick iterations | Linear integration |
+       264 -  | Human-triggered | Webhook-triggered |
+       265 -  
+       266 -  The workflow.json can reference either:
+       267 -  ```json
+       268 -  {
+       269 -    "steps": [
+       270 -      { "type": "command", "path": "/research-codebase" },
+       271 -      { "type": "subroutine", "name": "planning" },
+       272 -      { "type": "command", "path": "/validate" },
+       273 -      { "type": "subroutine", "name": "implement" }
+       274 -    ]
+       275 -  }
+       250    ```
+       251 +  .gitignore:
+       252 +  repos/
+       253 +  .env*
+       254 +  config.json
+       255 +  secure-configs/
+       256 +  ```
+       257    
+       258 -  ---
+       258 +  Commit everything else. Push to shared repo. Different 
+           + machines have different timestamps. Merging adds files 
+           + together, no conflicts.
+       259    
+       260 -  ## 11. Open Questions for Planning
+       260 +  ### Analysis
+       261    
+       262 -  ### 11.1 Architecture Questions
+       262 +  When ready to analyze across machines:
+       263 +  1. Push all machines to shared GitHub repo
+       264 +  2. Import JSON files to ClickHouse
+       265 +  3. MCP queries ClickHouse
+       266 +  4. AI analyzes across all experiments, proposes merged 
+           + improvements
+       267    
+       268 -  1. **Package structure**: What's in `evolution/src/`? What 
+           - are the main modules?
+       269 -  2. **Workflow storage**: Where do workflow.json files live?
+           -  Per-repo? Central?
+       270 -  3. **Prompt versioning**: How do we track prompt versions? 
+           - Git? Database?
+       271 -  4. **Trigger mechanism**: How does Evolution know when a 
+           - run finishes?
+       272 -  
+       273 -  ### 11.2 Grading Questions
+       274 -  
+       275 -  1. **Grader prompts**: What makes a good grader prompt?
+       276 -  2. **Meta-grader criteria**: How do we know if a grader is 
+           - good?
+       277 -  3. **Disagreement handling**: What if graders disagree?
+       278 -  4. **Human override**: When does human judgment override 
+           - grading?
+       279 -  
+       280 -  ### 11.3 Evolution Questions
+       281 -  
+       282 -  1. **Change magnitude**: How big should prompt changes be?
+       283 -  2. **Acceptance criteria**: When is a change "better"?
+       284 -  3. **Rollback mechanism**: How do we revert bad changes?
+       285 -  4. **Proposition conflicts**: How do we combine multiple 
+           - improvement goals?
+       286 -  
+       287 -  ### 11.4 Practical Questions
+       288 -  
+       289 -  1. **First agent**: What's the first specialist agent to 
+           - create?
+       290 -  2. **First workflow**: What's the first workflow to evolve?
+       291 -  3. **Test strategy**: How do we test Evolution itself?
+       292 -  4. **Metrics**: What do we measure to know it's working?
+       293 -  
+       268    ---
+       269    
+       270 -  ## 12. Key Insights from Discussion
+       270 +  ## 11. Summary
+       271    
+       272 -  ### 12.1 The Interface is the Config
+       272 +  | Component | What It Is | Who Controls It |
+       273 +  |-----------|------------|-----------------|
+       274 +  | Workflow | Sequence of steps | Manual design |
+       275 +  | Parts within workflow | Prompts, agents, behaviors | AI 
+           + evolution |
+       276 +  | Propositions | Hypotheses about improvement | Human 
+           + defines, AI refines |
+       277 +  | Grading | Quality evaluation | Evolves with meta-graders 
+           + |
+       278 +  | Storage | ~/.cyrus/ folder | Git + ClickHouse |
+       279    
+       280 -  The workflow.json + prompt files are the "API" between 
+           - Cyrus and Evolution. Small text changes = big behavior 
+           - changes. This is the minimal surface area for improvement.
+       281 -  
+       282 -  ### 12.2 Separation Enables Evolution at Every Level
+       283 -  
+       284 -  Each grading layer runs in a separate session. Session N 
+           - can only read outputs from sessions 0 to N-1. This isolation
+           -  lets us evolve each layer independently - task execution, 
+           - grading, meta-grading all improve separately.
+       285 -  
+       286 -  ### 12.3 It's All Cyrus (Dogfooding)
+       287 -  
+       288 -  We don't build a new execution engine. Grading is just 
+           - another workflow. Meta-grading is just another workflow. 
+           - Evolution is just another workflow. All run by Cyrus with 
+           - different prompts.
+       289 -  
+       290 -  ### 12.4 Evolve the Evolution
+       291 -  
+       292 -  The evolution package itself can be improved:
+       293 -  - Cyrus-as-developer works on the Cyrus repo
+       294 -  - It sees the evolution package code
+       295 -  - It can improve graders, meta-graders, the evolution 
+           - workflow itself
+       296 -  - Dogfooding all the way down
+       297 -  
+       298 -  ### 12.5 Start From What Exists
+       299 -  
+       300 -  First workflow replicates current Cyrus exactly. Then we 
+           - improve by adding layers:
+       301 -  1. Documentation agents (improve knowledge)
+       302 -  2. Better planning (uses improved knowledge)
+       303 -  3. Better implementation (uses better plans)
+       304 -  
+       305 -  ### 12.6 Specialist Agents for Context Management
+       306 -  
+       307 -  Agents don't pollute orchestrator context:
+       308 -  - Agent reads extensively, returns summary
+       309 -  - Orchestrator stays focused
+       310 -  - Each agent owns its domain (Postgres, Auth, API, etc.)
+       311 -  
+       312 -  ### 12.7 Evolve Propositions, Not Just Agents
+       313 -  
+       314 -  When multiple improvements target the same component:
+       315 -  - Don't let them override each other
+       316 -  - Combine the goals into one proposition
+       317 -  - Evolve the proposition, then evolve the agent to meet it
+       318 -  
+       319 -  ### 12.8 Minimal Cyrus Changes
+       320 -  
+       321 -  We only add hooks where absolutely necessary:
+       322 -  - Prompt path override (~10 lines)
+       323 -  - Per-subroutine model (~15 lines)
+       324 -  - Metrics collection (~50 lines)
+       325 -  
+       326 -  Everything else is in the Evolution package.
+       327 -  
+       280    ---
+       281    
+       282 -  ## 13. Next Steps
+       283 -  
+       284 -  1. **Replicate current Cyrus workflow** - First 
+           - workflow.json mirrors full-development exactly
+       285 -  2. **Create first specialist agent** - Pick a domain (e.g.,
+           -  project patterns)
+       286 -  3. **Build agent that documents the codebase** - Writes to 
+           - docs folder
+       287 -  4. **Add agent call before planning** - Planning reads 
+           - agent output
+       288 -  5. **Grade the improvement** - Did better docs improve 
+           - planning?
+       289 -  6. **Iterate** - Evolve agent, add more agents, add more 
+           - layers
+       290 -  
+       291 -  The first goal is: **Better documentation → Better 
+           - planning**
+       292 -  
+       293 -  This is the hypothesis we test first. Everything else 
+           - builds on it.
+       294 -  
+       295 -  ---
+       296 -  
+       282    **Document Status:** Research complete
+       283 -  **Ready for:** Planning phase
+       283 +  **Next:** Planning phase
+
+⏺ Done. The document is now ~280 lines. Clear statements about what we're
+  doing:
+
+  1. Evolution package extends Cyrus
+  2. Two contexts (development vs production)
+  3. Workflows are manually designed (TypeScript, not JSON)
+  4. Evolution improves parts within workflows (prompts, agents, behaviors)
+  5. Specialist agents for context management
+  6. Three-level grading system
+  7. Propositions drive evolution
+  8. Linear naming controls workflow selection
+  9. Hooks via file substitution
+  10. Storage in ~/.cyrus/ with git sync and ClickHouse for analysis
+
+  No comparisons, no "instead of", no hedging. Just what we're doing and
+  why.
+
