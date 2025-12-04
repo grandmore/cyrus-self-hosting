@@ -1,174 +1,126 @@
-# Workflow Structure Specification
+# External Workflow Loading System
 
-**Purpose:** Define the exact structure for external workflows at `~/.cyrus/workflows/`
+**Purpose:** Load workflow definitions from `~/.cyrus/workflows/` instead of Cyrus's internal definitions, enabling iteration on prompts and workflow structure without modifying Cyrus code.
 
----
-
-## Core Principle
-
-**We only create folders for workflows we want to override or create new.**
-
-Cyrus has internal procedures (full-development, simple-question, debugger-full, etc.). If we don't override one, Cyrus uses its internal version unchanged. We don't mirror everything - only what we're customizing.
+**Date:** 2025-12-04
 
 ---
 
-## Folder Structure
+## 1. What We're Building
 
-Each workflow lives in its own folder, named after the procedure:
+When Cyrus needs a procedure (e.g., `full-development`), check if an external version exists. If yes, use it. If no, use internal.
 
-```
-~/.cyrus/workflows/
-└── {procedure-name}/                     ← Folder name = procedure name
-    ├── workflow.ts                       ← REQUIRED: exports resolve() hook
-    ├── types.ts                          ← Type definitions
-    ├── registry.ts                       ← Procedure/subroutine definitions
-    ├── system-prompts/                   ← System prompts used by this workflow
-    │   └── *.md
-    ├── subroutines/                      ← Subroutine prompts used by this workflow
-    │   └── *.md
-    ├── templates/                        ← Templates used by this workflow
-    │   └── *.md
-    └── versions/                         ← Evolution's version tracking (our addition)
-        ├── versions.json
-        └── *.v1.md, *.v2.md, etc.
-```
+The decision happens at runtime when a procedure is requested, not at startup.
 
 ---
 
-## Example: full-development
+## 2. What We've Built
 
-This workflow overrides Cyrus's `full-development` procedure.
+### 2.1 External Workflow Structure
+
+Location: `~/.cyrus/workflows/`
 
 ```
 ~/.cyrus/workflows/
 └── full-development/
-    ├── workflow.ts                       ← resolve() hook
-    ├── types.ts
-    ├── registry.ts
-    ├── system-prompts/
-    │   └── builder.md                    ← Only what full-development uses
-    ├── subroutines/
-    │   ├── coding-activity.md            ← full-development uses these 4
-    │   ├── verifications.md
-    │   ├── git-gh.md
-    │   └── concise-summary.md
-    ├── templates/
-    │   └── prompt-template.md
-    └── versions/
-        ├── versions.json
-        ├── coding-activity.v1.md
-        ├── verifications.v1.md
-        ├── git-gh.v1.md
-        └── concise-summary.v1.md
+    ├── registry.js              ← Exact duplicate of Cyrus's registry.ts (as JavaScript)
+    └── subroutines/             ← Prompt files
+        ├── coding-activity.md
+        ├── concise-summary.md
+        ├── debugger-fix.md
+        ├── debugger-reproduction.md
+        ├── get-approval.md
+        ├── git-gh.md
+        ├── plan-summary.md
+        ├── preparation.md
+        ├── question-answer.md
+        ├── question-investigation.md
+        ├── verbose-summary.md
+        └── verifications.md
 ```
 
-**Note:** We do NOT include `question-answer.md`, `debugger-fix.md`, etc. because those belong to other procedures (simple-question, debugger-full). Each workflow folder only contains what that workflow uses.
+### 2.2 registry.js
+
+Our `registry.js` is an exact duplicate of Cyrus's `registry.ts`, converted to JavaScript:
+
+- Same exports: `SUBROUTINES`, `PROCEDURES`, `CLASSIFICATION_TO_PROCEDURE`, `getProcedure`, `getProcedureForClassification`, `getAllProcedureNames`
+- Same structure, same flags, same everything
+- Only difference: `promptPath` uses absolute paths via `join(__dirname, "subroutines/...")` instead of relative paths
+
+This means when our registry is loaded, it behaves identically to Cyrus's internal registry, but points to our prompt files.
 
 ---
 
-## Example: Adding a New Workflow (full-development-tdd)
+## 3. The Integration
 
-To create a TDD variant that enforces test-driven development:
+### 3.1 What Cyrus Does Today
 
-```
-~/.cyrus/workflows/
-├── full-development/                     ← Existing override
-└── full-development-tdd/                 ← NEW workflow
-    ├── workflow.ts                       ← Different subroutine sequence
-    ├── types.ts
-    ├── registry.ts
-    ├── system-prompts/
-    │   └── builder.md
-    ├── subroutines/
-    │   ├── write-failing-test.md         ← TDD-specific steps
-    │   ├── implement-minimal.md
-    │   ├── verify-pass.md
-    │   ├── refactor.md
-    │   ├── git-gh.md
-    │   └── concise-summary.md
-    ├── templates/
-    └── versions/
-```
+1. Orchestrator classifies the issue (e.g., "full-development")
+2. `getProcedure("full-development")` returns the procedure from internal `PROCEDURES`
+3. Cyrus runs the subroutines, loading prompts from internal paths
 
-This is a **sibling** to full-development, not nested inside it. It would need to be added to Cyrus's classification mapping to be routable.
+### 3.2 What We Want
 
----
+1. Orchestrator classifies the issue (e.g., "full-development")
+2. `getProcedure("full-development")` checks: does `~/.cyrus/workflows/full-development/registry.js` exist?
+   - If yes: load procedure from external registry
+   - If no: use internal `PROCEDURES`
+3. Cyrus runs the subroutines, loading prompts from whatever paths the procedure specifies
 
-## Example: Non-Code Workflows
+### 3.3 Minimal Change in Cyrus
 
-Workflows aren't limited to code. Examples:
+One small change in `getProcedure()` that calls out to our external code. All logic lives in our external file, not in Cyrus.
 
-```
-~/.cyrus/workflows/
-├── full-development/
-├── full-development-tdd/
-├── copywriting/                          ← Writing copy for websites
-│   ├── workflow.ts
-│   ├── subroutines/
-│   │   ├── research-audience.md
-│   │   ├── draft-copy.md
-│   │   ├── review-tone.md
-│   │   └── finalize.md
-│   └── versions/
-└── youtube-content/                      ← Video content creation
-    ├── workflow.ts
-    ├── subroutines/
-    │   ├── research-topic.md
-    │   ├── write-script.md
-    │   ├── plan-visuals.md
-    │   └── create-thumbnail-brief.md
-    └── versions/
-```
+Cyrus should not contain:
+- Path checking logic
+- File existence checks
+- Complex conditionals
+
+Cyrus should only:
+- Call a function that returns a procedure (or undefined)
+- If returned, use it
+- If not, fall back to internal
 
 ---
 
-## What We Don't Create
+## 4. Why This Works
 
-- `simple-question/` - Not overriding, Cyrus internal works fine
-- `debugger-full/` - Not overriding, Cyrus internal works fine
-- `orchestrator-full/` - Not overriding, Cyrus internal works fine
-- `plan-mode/` - Not overriding, Cyrus internal works fine
-- `documentation-edit/` - Not overriding, Cyrus internal works fine
+Our `registry.js` exports the same interface as Cyrus's `registry.ts`. When loaded:
 
-If we later want to override any of these, we create the folder with the same structure.
+- `getProcedure("full-development")` returns the same shape
+- `promptPath` values are absolute paths to our files
+- Cyrus's `loadSubroutinePrompt()` reads from whatever path it's given
 
----
-
-## The resolve() Hook
-
-`workflow.ts` must export a `resolve()` function:
-
-```typescript
-import type { ProcedureDefinition } from './types';
-
-export async function resolve(context: ResolveContext): Promise<ProcedureDefinition> {
-  // Return the procedure definition
-  // Evolution wraps this to modify paths for A/B testing
-  return PROCEDURE;
-}
-```
+No changes needed to:
+- Types
+- ProcedureRouter (except the one hook point)
+- EdgeWorker prompt loading
+- Anything else
 
 ---
 
-## Fallback Behavior
+## 5. Adding New Workflows
 
-When Cyrus loads a procedure:
+To add `youtube-scripts`:
 
-1. Check `~/.cyrus/workflows/{procedure-name}/workflow.js` exists?
-   - YES → import and call `resolve()` → use returned procedure
-   - NO → use Cyrus internal procedure
+1. Create `~/.cyrus/workflows/youtube-scripts/registry.js`
+2. Define the procedure with its subroutines
+3. Create prompt files in `subroutines/`
 
-This means:
-- No external folder = Cyrus works exactly as before
-- External folder exists = Cyrus uses our override
+Cyrus will find it when `getProcedure("youtube-scripts")` is called.
 
 ---
 
-## versions/ Folder
+## 6. Implementation Status
 
-This is **our addition** for Evolution. Cyrus doesn't know about it.
+**Done:**
+- [x] Created `~/.cyrus/workflows/full-development/` folder
+- [x] Created `registry.js` as exact duplicate of Cyrus's registry (JavaScript)
+- [x] Copied all prompt files to `subroutines/`
 
-- `versions.json` - Tracks current version and history for each prompt
-- `*.v1.md`, `*.v2.md` - Historical versions of prompts
+**Pending:**
+- [ ] Minimal change in Cyrus to check external before internal
 
-Evolution uses this for A/B testing and tracking improvements.
+---
+
+**End of Document**
