@@ -1,0 +1,3 @@
+# source code location
+frontend: main/frontend
+backend: main/api

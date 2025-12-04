@@ -1,0 +1,17 @@
+{
+	"mcpServers": {
+		"cca": {
+			"command": "npx",
+			"args": [
+				"-y",
+				"tsx",
+				"/Users/stuartfenton/docker/claude-code-mcp-advanced/src/server.ts"
+			]
+		},
+		"context7": {
+			"command": "npx",
+			"args": ["-y", "@upstash/context7-mcp@latest"],
+			"allowedTools": ["resolve-library-id", "get-library-docs"]
+		}
+	}
+}
