@@ -2,6 +2,7 @@
  * Registry of predefined procedures and routing rules
  */
 
+import { loadExternalProcedure } from "./external-loader.js";
 import type { ProcedureDefinition, RequestClassification } from "./types.js";
 
 /**
@@ -171,8 +172,17 @@ export const CLASSIFICATION_TO_PROCEDURE: Record<
 
 /**
  * Get a procedure definition by name
+ * Checks external workflows first (~/.cyrus/workflows/<name>/registry.js)
+ * Falls back to internal PROCEDURES if not found externally
  */
 export function getProcedure(name: string): ProcedureDefinition | undefined {
+	// Try external workflow first
+	const externalProcedure = loadExternalProcedure(name);
+	if (externalProcedure) {
+		return externalProcedure;
+	}
+
+	// Fall back to internal procedure
 	return PROCEDURES[name];
 }
 
