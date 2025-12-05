@@ -172,29 +172,45 @@ async function initializeExternalWorkflows() {
 
 		// Output structured summary after all workflows are loaded
 		for (const [workflowName, summary] of workflowSummaries) {
-			console.log(`\n[External Workflow] Loaded workflow: ${workflowName}`);
+			// Use bold cyan for workflow name to make it stand out
+			console.log(
+				`\n[External Workflow] Loaded workflow: \x1b[1;36m${workflowName}\x1b[0m`,
+			);
 
 			if (summary.subroutines.length > 0) {
-				console.log(`  Subroutines: ${summary.subroutines.join(", ")}`);
+				// Cyan for "Subroutines:" label
+				console.log(
+					`  \x1b[36mSubroutines:\x1b[0m ${summary.subroutines.join(", ")}`,
+				);
 			}
 
 			if (summary.procedures.length > 0) {
-				console.log(`  Procedures: ${summary.procedures.join(", ")}`);
+				// Green for "Procedures:" label
+				console.log(
+					`  \x1b[32mProcedures:\x1b[0m ${summary.procedures.join(", ")}`,
+				);
 			}
 
 			if (summary.classifications.length > 0) {
 				const mappings = summary.classifications
 					.map((c) => `${c.classification} → ${c.procedure}`)
 					.join(", ");
-				console.log(`  Classifications: ${mappings}`);
+				// Yellow for "Classifications:" label
+				console.log(`  \x1b[33mClassifications:\x1b[0m ${mappings}`);
 			}
 
 			if (summary.systemPrompts.length > 0) {
-				console.log(`  System Prompts: ${summary.systemPrompts.join(", ")}`);
+				// Magenta for "System Prompts:" label
+				console.log(
+					`  \x1b[35mSystem Prompts:\x1b[0m ${summary.systemPrompts.join(", ")}`,
+				);
 			}
 
 			if (summary.promptTypes.length > 0) {
-				console.log(`  Prompt Types: ${summary.promptTypes.join(", ")}`);
+				// Blue for "Prompt Types:" label
+				console.log(
+					`  \x1b[34mPrompt Types:\x1b[0m ${summary.promptTypes.join(", ")}`,
+				);
 			}
 		}
 
