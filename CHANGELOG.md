@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - Added CLI platform mode support to enable in-memory issue tracking for testing and development ([CYPACK-509](https://linear.app/ceedar/issue/CYPACK-509))
+- Added comprehensive documentation for the custom workflows and template overloading system ([ENG-36](https://linear.app/grandmore/issue/ENG-36))
 
 ## [0.2.5] - 2025-12-03
 
