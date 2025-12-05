@@ -17,51 +17,161 @@
 import type * as LinearSDK from "@linear/sdk";
 
 // ============================================================================
-// TYPE ALIASES - Linear SDK is the source of truth
+// TYPE ALIASES - Pick-based selections from Linear SDK
 // ============================================================================
 
 /**
- * Issue type - Direct alias to Linear SDK's Issue type.
- * Linear SDK is the source of truth for all issue tracking types.
+ * Pagination connection for list results.
+ * Based on Linear SDK's Connection pattern with PageInfo.
+ * Linear SDK is the source of truth for pagination patterns.
+ *
+ * @see {@link LinearSDK.LinearDocument.PageInfo} - Linear's PageInfo type
+ */
+export interface Connection<T> {
+	/** Array of items */
+	nodes: T[];
+	/** Page info for cursor-based pagination (from Linear SDK) */
+	pageInfo?: LinearSDK.LinearDocument.PageInfo;
+	/** Total count (if available) */
+	totalCount?: number;
+}
+
+/**
+ * Issue type - Combines Pick selections with custom method signatures.
+ * Linear SDK is the source of truth - we use Pick for properties and async getters,
+ * but override collection methods to use our simplified Connection<T> type instead
+ * of Linear SDK's Connection classes (which have private members).
+ *
+ * This approach eliminates ALL `as unknown as` casts while maintaining
+ * full type safety and compatibility with Linear SDK.
  *
  * @see {@link LinearSDK.Issue} - Linear's complete Issue type
  */
-export type Issue = LinearSDK.Issue;
+export type Issue = Pick<
+	LinearSDK.Issue,
+	// Properties (14)
+	| "id"
+	| "identifier"
+	| "title"
+	| "description"
+	| "url"
+	| "branchName"
+	| "assigneeId"
+	| "stateId"
+	| "teamId"
+	| "labelIds"
+	| "priority"
+	| "createdAt"
+	| "updatedAt"
+	| "archivedAt"
+	// Async getters (5)
+	| "state"
+	| "assignee"
+	| "team"
+	| "parent"
+	| "project"
+> & {
+	// Collection methods with simplified Connection<T> return types
+	labels(
+		variables?: Omit<LinearSDK.LinearDocument.Issue_LabelsQueryVariables, "id">,
+	): Promise<Connection<Label>>;
+	comments(
+		variables?: Omit<
+			LinearSDK.LinearDocument.Issue_CommentsQueryVariables,
+			"id"
+		>,
+	): Promise<Connection<Comment>>;
+	attachments(
+		variables?: Omit<
+			LinearSDK.LinearDocument.Issue_AttachmentsQueryVariables,
+			"id"
+		>,
+	): Promise<Connection<LinearSDK.Attachment>>;
+	children(
+		variables?: Omit<
+			LinearSDK.LinearDocument.Issue_ChildrenQueryVariables,
+			"id"
+		>,
+	): Promise<Connection<Issue>>;
+	// Update method with simplified IssuePayload return type
+	update(
+		input?: LinearSDK.LinearDocument.IssueUpdateInput,
+	): Promise<IssuePayload>;
+};
 
 /**
- * Comment type - Direct alias to Linear SDK's Comment type.
+ * Comment type - Combines Pick selections with custom method signatures.
+ * Uses simplified Connection<T> for collection methods.
  *
  * @see {@link LinearSDK.Comment} - Linear's complete Comment type
  */
-export type Comment = LinearSDK.Comment;
+export type Comment = Pick<
+	LinearSDK.Comment,
+	// Properties (4)
+	| "id"
+	| "body"
+	| "createdAt"
+	| "updatedAt"
+	// Async getters (3)
+	| "user"
+	| "parent"
+	| "issue"
+> & {
+	// Collection methods with simplified Connection<T> return types
+	children(
+		variables?: LinearSDK.LinearDocument.Comment_ChildrenQueryVariables,
+	): Promise<Connection<Comment>>;
+};
 
 /**
- * Label type - Direct alias to Linear SDK's IssueLabel type.
+ * Label type - Selects properties used in the codebase.
  *
  * @see {@link LinearSDK.IssueLabel} - Linear's complete IssueLabel type
  */
-export type Label = LinearSDK.IssueLabel;
+export type Label = Pick<
+	LinearSDK.IssueLabel,
+	"id" | "name" | "description" | "color"
+>;
 
 /**
- * Team type - Direct alias to Linear SDK's Team type.
+ * Team type - Combines Pick selections with custom method signatures.
+ * Uses simplified Connection<T> for collection methods.
  *
  * @see {@link LinearSDK.Team} - Linear's complete Team type
  */
-export type Team = LinearSDK.Team;
+export type Team = Pick<
+	LinearSDK.Team,
+	// Properties (6)
+	"id" | "name" | "key" | "description" | "color" | "displayName"
+> & {
+	// Collection methods with simplified Connection<T> return types
+	states(
+		variables?: Omit<LinearSDK.LinearDocument.Team_StatesQueryVariables, "id">,
+	): Promise<Connection<WorkflowState>>;
+	members(
+		variables?: Omit<LinearSDK.LinearDocument.Team_MembersQueryVariables, "id">,
+	): Promise<Connection<User>>;
+};
 
 /**
- * User type - Direct alias to Linear SDK's User type.
+ * User type - Selects properties used in the codebase.
  *
  * @see {@link LinearSDK.User} - Linear's complete User type
  */
-export type User = LinearSDK.User;
+export type User = Pick<
+	LinearSDK.User,
+	"id" | "name" | "displayName" | "email"
+>;
 
 /**
- * WorkflowState type - Direct alias to Linear SDK's WorkflowState type.
+ * WorkflowState type - Selects properties used in the codebase.
  *
  * @see {@link LinearSDK.WorkflowState} - Linear's complete WorkflowState type
  */
-export type WorkflowState = LinearSDK.WorkflowState;
+export type WorkflowState = Pick<
+	LinearSDK.WorkflowState,
+	"id" | "name" | "type" | "description" | "color" | "position"
+>;
 
 // ============================================================================
 // FILTER AND PAGINATION OPTIONS
@@ -163,6 +273,126 @@ export interface CommentWithAttachments extends Comment {
 		size?: number;
 	}>;
 }
+
+/**
+ * Simplified IssuePayload type for update operations.
+ * Uses Pick to select only the essential properties.
+ *
+ * @see {@link LinearSDK.IssuePayload} - Linear's complete IssuePayload type
+ */
+export type IssuePayload = Pick<
+	LinearSDK.IssuePayload,
+	"success" | "issue" | "lastSyncId"
+>;
+
+/**
+ * Simplified AgentSession type.
+ * Uses Pick to select only the properties we actually use.
+ * Relationship getters can return undefined for CLI implementation.
+ *
+ * @see {@link LinearSDK.AgentSession} - Linear's complete AgentSession type
+ */
+export type AgentSessionSDKType = Pick<
+	LinearSDK.AgentSession,
+	| "id"
+	| "externalLink"
+	| "summary"
+	| "status"
+	| "type"
+	| "createdAt"
+	| "updatedAt"
+	| "archivedAt"
+	| "startedAt"
+	| "endedAt"
+	| "appUserId"
+	| "creatorId"
+	| "issueId"
+	| "commentId"
+> & {
+	// Relationship async getters - allow undefined for CLI (matches Linear SDK pattern)
+	readonly appUser: Promise<User> | undefined;
+	readonly creator: Promise<User> | undefined;
+	readonly issue: Promise<Issue> | undefined;
+	readonly comment: Promise<Comment> | undefined;
+	// Collection method with simplified Connection
+	activities(
+		variables?: Omit<
+			LinearSDK.LinearDocument.AgentSession_ActivitiesQueryVariables,
+			"id"
+		>,
+	): Promise<Connection<LinearSDK.AgentActivity>>;
+};
+
+/**
+ * Simplified AgentSessionPayload type for session creation operations.
+ * Uses Pick to select only the essential properties.
+ *
+ * @see {@link LinearSDK.AgentSessionPayload} - Linear's complete AgentSessionPayload type
+ */
+export type AgentSessionPayload = Pick<
+	LinearSDK.AgentSessionPayload,
+	"success" | "lastSyncId"
+> & {
+	// AgentSession property with our simplified type
+	agentSession?: AgentSessionSDKType;
+};
+
+/**
+ * Type alias for AgentSession used in IIssueTrackerService interface.
+ * Uses Pick to avoid private member issues while matching the SDK type structure.
+ * Named differently to avoid nominal typing collision with AgentSessionSDKType.
+ *
+ * Uses Promise for async properties instead of LinearSDK.LinearFetch.
+ *
+ * @see {@link LinearSDK.AgentSession} - Linear's AgentSession type
+ */
+export type IssueTrackerAgentSession = Pick<
+	LinearSDK.AgentSession,
+	| "id"
+	| "externalLink"
+	| "summary"
+	| "status"
+	| "type"
+	| "createdAt"
+	| "updatedAt"
+	| "archivedAt"
+	| "startedAt"
+	| "endedAt"
+	| "appUserId"
+	| "creatorId"
+	| "issueId"
+	| "commentId"
+> & {
+	// Relationship async getters - use Promise instead of LinearFetch
+	readonly appUser: Promise<User> | undefined;
+	readonly creator: Promise<User> | undefined;
+	readonly issue: Promise<Issue> | undefined;
+	readonly comment: Promise<Comment> | undefined;
+	// Collection method with simplified Connection
+	activities(
+		variables?: Omit<
+			LinearSDK.LinearDocument.AgentSession_ActivitiesQueryVariables,
+			"id"
+		>,
+	): Promise<Connection<LinearSDK.AgentActivity>>;
+};
+
+/**
+ * Type alias for AgentSessionPayload used in IIssueTrackerService interface.
+ * Uses Pick to avoid private member issues while matching the SDK type structure.
+ * Named differently to avoid nominal typing collision with AgentSessionPayload.
+ *
+ * Uses Promise for agentSession instead of LinearSDK.LinearFetch.
+ *
+ * @see {@link LinearSDK.AgentSessionPayload} - Linear's AgentSessionPayload type
+ */
+export type IssueTrackerAgentSessionPayload = Pick<
+	LinearSDK.AgentSessionPayload,
+	"success" | "lastSyncId"
+> & {
+	// AgentSession property - use Promise instead of LinearFetch
+	agentSession?: Promise<IssueTrackerAgentSession>;
+};
 
 /**
  * Agent session status enumeration.
@@ -332,6 +562,30 @@ export interface AgentSessionCreateResponse {
 	agentSessionId: string;
 	/** Last sync ID */
 	lastSyncId: number;
+}
+
+/**
+ * Issue creation parameters.
+ */
+export interface IssueCreateInput {
+	/** Team ID or key */
+	teamId: string;
+	/** Issue title */
+	title: string;
+	/** Issue description */
+	description?: string;
+	/** Issue priority (0-4) */
+	priority?: IssuePriority;
+	/** Initial state ID */
+	stateId?: string;
+	/** Assignee user ID */
+	assigneeId?: string;
+	/** Parent issue ID (for sub-issues) */
+	parentId?: string;
+	/** Label IDs to apply */
+	labelIds?: string[];
+	/** Additional platform-specific fields */
+	[key: string]: unknown;
 }
 
 /**
@@ -584,22 +838,6 @@ export function isIssueUnassignedWebhook(
 		webhook.type === "AppUserNotification" &&
 		webhook.action === "issueUnassignedFromYou"
 	);
-}
-
-/**
- * Pagination connection for list results.
- * Based on Linear SDK's Connection pattern with PageInfo.
- * Linear SDK is the source of truth for pagination patterns.
- *
- * @see {@link LinearSDK.LinearDocument.PageInfo} - Linear's PageInfo type
- */
-export interface Connection<T> {
-	/** Array of items */
-	nodes: T[];
-	/** Page info for cursor-based pagination (from Linear SDK) */
-	pageInfo?: LinearSDK.LinearDocument.PageInfo;
-	/** Total count (if available) */
-	totalCount?: number;
 }
 
 /**

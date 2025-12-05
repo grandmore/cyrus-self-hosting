@@ -1,10 +1,9 @@
-import type { Issue } from "@linear/sdk";
-import type { EdgeWorkerConfig, RepositoryConfig } from "cyrus-core";
+import type { EdgeWorkerConfig, Issue, RepositoryConfig } from "cyrus-core";
+import type { GitService } from "cyrus-edge-worker";
 import { EdgeWorker } from "cyrus-edge-worker";
 import { DEFAULT_SERVER_PORT, parsePort } from "../config/constants.js";
 import type { Workspace } from "../config/types.js";
 import type { ConfigService } from "./ConfigService.js";
-import type { GitService } from "./GitService.js";
 import type { Logger } from "./Logger.js";
 
 /**

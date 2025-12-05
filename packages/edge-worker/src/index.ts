@@ -9,7 +9,9 @@ export type {
 	Workspace,
 } from "cyrus-core";
 export { AgentSessionManager } from "./AgentSessionManager.js";
-export { EdgeWorker } from "./EdgeWorker.js";
+export type { GitServiceLogger } from "./GitService.js";
+export { GitService } from "./GitService.js";
+export { EdgeWorker } from "./procedures/external-loader.js";
 export { RepositoryRouter } from "./RepositoryRouter.js";
 export {
 	type ConfigSaveCallback,

@@ -9,11 +9,6 @@
  */
 
 import type {
-	AgentSession,
-	AgentSessionPayload,
-	LinearFetch,
-} from "@linear/sdk";
-import type {
 	AgentEventTransportConfig,
 	IAgentEventTransport,
 } from "./IAgentEventTransport.js";
@@ -30,6 +25,8 @@ import type {
 	FileUploadRequest,
 	FileUploadResponse,
 	Issue,
+	IssueTrackerAgentSession,
+	IssueTrackerAgentSessionPayload,
 	IssueUpdateInput,
 	IssueWithChildren,
 	Label,
@@ -597,7 +594,7 @@ export interface IIssueTrackerService {
 	 */
 	createAgentSessionOnIssue(
 		input: AgentSessionCreateOnIssueInput,
-	): LinearFetch<AgentSessionPayload>;
+	): Promise<IssueTrackerAgentSessionPayload>;
 
 	/**
 	 * Create an agent session on a comment thread.
@@ -621,7 +618,7 @@ export interface IIssueTrackerService {
 	 */
 	createAgentSessionOnComment(
 		input: AgentSessionCreateOnCommentInput,
-	): LinearFetch<AgentSessionPayload>;
+	): Promise<IssueTrackerAgentSessionPayload>;
 
 	/**
 	 * Fetch an agent session by ID.
@@ -636,7 +633,22 @@ export interface IIssueTrackerService {
 	 * console.log('Session status:', session.status);
 	 * ```
 	 */
-	fetchAgentSession(sessionId: string): LinearFetch<AgentSession>;
+	fetchAgentSession(sessionId: string): Promise<IssueTrackerAgentSession>;
+
+	/**
+	 * Emit a stop signal webhook event for the EdgeWorker to handle.
+	 * Should be called after stopping a session to trigger EdgeWorker stop handling.
+	 *
+	 * @param sessionId - The session ID to emit stop signal for
+	 *
+	 * @example
+	 * ```typescript
+	 * // Stop the session and emit the stop signal
+	 * await service.updateAgentSessionStatus(sessionId, AgentSessionStatus.Complete);
+	 * await service.emitStopSignalEvent(sessionId);
+	 * ```
+	 */
+	emitStopSignalEvent(sessionId: string): Promise<void>;
 
 	// ========================================================================
 	// AGENT ACTIVITY OPERATIONS

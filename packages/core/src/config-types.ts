@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { Issue as LinearIssue } from "@linear/sdk";
 import type { Workspace } from "./CyrusAgentSession.js";
+import type { Issue } from "./issue-tracker/types.js";
 
 /**
  * Resolve path with tilde (~) expansion
@@ -110,7 +110,12 @@ export interface EdgeWorkerConfig {
 	ngrokAuthToken?: string; // Ngrok auth token for tunnel creation
 
 	// Issue tracker platform configuration
-	platform?: "linear"; // Issue tracker platform type (default: "linear")
+	/**
+	 * Issue tracker platform type (default: "linear")
+	 * - "linear": Uses Linear as the issue tracker (default production mode)
+	 * - "cli": Uses an in-memory issue tracker for CLI-based testing and development
+	 */
+	platform?: "linear" | "cli";
 
 	// Linear configuration (global)
 	linearWorkspaceSlug?: string; // Linear workspace URL slug (e.g., "ceedar" from "https://linear.app/ceedar/...")
@@ -156,7 +161,7 @@ export interface EdgeWorkerConfig {
 		// Called when workspace needs to be created
 		// Now includes repository context
 		createWorkspace?: (
-			issue: LinearIssue,
+			issue: Issue,
 			repository: RepositoryConfig,
 		) => Promise<Workspace>;
 
@@ -172,7 +177,7 @@ export interface EdgeWorkerConfig {
 		// Now includes repository ID
 		onSessionStart?: (
 			issueId: string,
-			issue: LinearIssue,
+			issue: Issue,
 			repositoryId: string,
 		) => void;
 		onSessionEnd?: (

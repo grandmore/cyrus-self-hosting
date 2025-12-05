@@ -8,7 +8,10 @@
 import type { CyrusAgentSession, ISimpleAgentRunner } from "cyrus-core";
 import { SimpleGeminiRunner } from "cyrus-gemini-runner";
 import { SimpleClaudeRunner } from "cyrus-simple-agent-runner";
-import { getProcedureForClassification, PROCEDURES } from "./registry.js";
+import {
+	getProcedureForClassification,
+	PROCEDURES,
+} from "./external-loader.js";
 import type {
 	ProcedureDefinition,
 	ProcedureMetadata,

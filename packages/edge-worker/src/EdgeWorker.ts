@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { LinearClient, type Issue as LinearIssue } from "@linear/sdk";
+import { LinearClient } from "@linear/sdk";
 import { watch as chokidarWatch, type FSWatcher } from "chokidar";
 import type {
 	HookCallbackMatcher,
@@ -34,6 +34,7 @@ import type {
 	GuidanceRule,
 	IAgentRunner,
 	IIssueTrackerService,
+	Issue,
 	IssueMinimal,
 	IssueUnassignedWebhook,
 	RepositoryConfig,
@@ -46,6 +47,8 @@ import type {
 	WebhookIssue,
 } from "cyrus-core";
 import {
+	CLIIssueTrackerService,
+	CLIRPCServer,
 	DEFAULT_PROXY_URL,
 	isAgentSessionCreatedWebhook,
 	isAgentSessionPromptedWebhook,
@@ -63,6 +66,7 @@ import {
 } from "cyrus-linear-event-transport";
 import { fileTypeFromBuffer } from "file-type";
 import { AgentSessionManager } from "./AgentSessionManager.js";
+import { GitService } from "./GitService.js";
 import {
 	type ProcedureDefinition,
 	ProcedureRouter,
@@ -106,6 +110,7 @@ export class EdgeWorker extends EventEmitter {
 	private agentSessionManagers: Map<string, AgentSessionManager> = new Map(); // Maps repository ID to AgentSessionManager, which manages agent runners for a repo
 	private issueTrackers: Map<string, IIssueTrackerService> = new Map(); // one issue tracker per 'repository'
 	private linearEventTransport: LinearEventTransport | null = null; // Single event transport for webhook delivery
+	private cliRPCServer: CLIRPCServer | null = null; // CLI RPC server for CLI platform mode
 	private configUpdater: ConfigUpdater | null = null; // Single config updater for configuration updates
 	private persistenceManager: PersistenceManager;
 	private sharedApplicationServer: SharedApplicationServer;
@@ -121,6 +126,7 @@ export class EdgeWorker extends EventEmitter {
 		string,
 		Promise<{ success: boolean; newToken?: string }>
 	> = new Map(); // Coalesces concurrent token refreshes per workspace
+	private gitService: GitService;
 
 	constructor(config: EdgeWorkerConfig) {
 		super();
@@ -167,6 +173,7 @@ export class EdgeWorker extends EventEmitter {
 			},
 		};
 		this.repositoryRouter = new RepositoryRouter(repositoryRouterDeps);
+		this.gitService = new GitService();
 
 		console.log(
 			`[EdgeWorker Constructor] Initializing parent-child session mapping system`,
@@ -178,9 +185,11 @@ export class EdgeWorker extends EventEmitter {
 		// Initialize shared application server
 		const serverPort = config.serverPort || config.webhookPort || 3456;
 		const serverHost = config.serverHost || "localhost";
+		const skipTunnel = config.platform === "cli"; // Skip Cloudflare tunnel in CLI mode
 		this.sharedApplicationServer = new SharedApplicationServer(
 			serverPort,
 			serverHost,
+			skipTunnel,
 			this.saveOAuthTokens.bind(this),
 		);
 
@@ -208,13 +217,23 @@ export class EdgeWorker extends EventEmitter {
 				this.repositories.set(repo.id, resolvedRepo);
 
 				// Create issue tracker for this repository's workspace
-				// Store raw client in Map, create stable proxy that looks it up
-				const rawClient = new LinearClient({
-					accessToken: repo.linearToken,
-				});
-				this.rawLinearClients.set(repo.id, rawClient);
-				const clientProxy = this.createLinearClientProxy(repo.id);
-				const issueTracker = new LinearIssueTrackerService(clientProxy);
+				// For CLI mode, use in-memory tracker; otherwise use Linear with proxy pattern
+				const issueTracker =
+					this.config.platform === "cli"
+						? (() => {
+								const service = new CLIIssueTrackerService();
+								service.seedDefaultData();
+								return service;
+							})()
+						: (() => {
+								// Store raw client in Map, create stable proxy that looks it up
+								const rawClient = new LinearClient({
+									accessToken: repo.linearToken,
+								});
+								this.rawLinearClients.set(repo.id, rawClient);
+								const clientProxy = this.createLinearClientProxy(repo.id);
+								return new LinearIssueTrackerService(clientProxy);
+							})();
 				this.issueTrackers.set(repo.id, issueTracker);
 
 				// Create AgentSessionManager for this repository with parent session lookup and resume callback
@@ -301,45 +320,99 @@ export class EdgeWorker extends EventEmitter {
 			throw new Error("No active repositories configured");
 		}
 
-		// 1. Create and register LinearEventTransport
-		const useDirectWebhooks =
-			process.env.LINEAR_DIRECT_WEBHOOKS?.toLowerCase() === "true";
-		const verificationMode = useDirectWebhooks ? "direct" : "proxy";
+		// Platform-specific initialization
+		if (this.config.platform === "cli") {
+			// CLI mode: Create and register CLIRPCServer
+			const firstIssueTracker = this.issueTrackers.get(firstRepo.id);
+			if (!firstIssueTracker) {
+				throw new Error("Issue tracker not found for first repository");
+			}
 
-		// Get appropriate secret based on mode
-		const secret = useDirectWebhooks
-			? process.env.LINEAR_WEBHOOK_SECRET || ""
-			: process.env.CYRUS_API_KEY || "";
+			// Type guard to ensure it's a CLIIssueTrackerService
+			if (!(firstIssueTracker instanceof CLIIssueTrackerService)) {
+				throw new Error(
+					"CLI platform requires CLIIssueTrackerService but found different implementation",
+				);
+			}
 
-		this.linearEventTransport = new LinearEventTransport({
-			fastifyServer: this.sharedApplicationServer.getFastifyInstance(),
-			verificationMode,
-			secret,
-		});
+			this.cliRPCServer = new CLIRPCServer({
+				fastifyServer: this.sharedApplicationServer.getFastifyInstance(),
+				issueTracker: firstIssueTracker,
+				version: "1.0.0",
+			});
 
-		// Listen for webhook events
-		this.linearEventTransport.on("event", (event: AgentEvent) => {
-			// Get all active repositories for webhook handling
-			const repos = Array.from(this.repositories.values());
-			this.handleWebhook(event as unknown as Webhook, repos);
-		});
+			// Register the /cli/rpc endpoint
+			this.cliRPCServer.register();
 
-		// Listen for errors
-		this.linearEventTransport.on("error", (error: Error) => {
-			this.handleError(error);
-		});
+			console.log("✅ CLI RPC server registered");
+			console.log("   RPC endpoint: /cli/rpc");
 
-		// Register the /webhook endpoint
-		this.linearEventTransport.register();
+			// Create CLI event transport and register listener
+			const cliEventTransport = firstIssueTracker.createEventTransport({
+				platform: "cli",
+				fastifyServer: this.sharedApplicationServer.getFastifyInstance(),
+			});
 
-		console.log(
-			`✅ Linear event transport registered (${verificationMode} mode)`,
-		);
-		console.log(
-			`   Webhook endpoint: ${this.sharedApplicationServer.getWebhookUrl()}`,
-		);
+			// Listen for webhook events (same pattern as Linear mode)
+			cliEventTransport.on("event", (event: AgentEvent) => {
+				// Get all active repositories for webhook handling
+				const repos = Array.from(this.repositories.values());
+				this.handleWebhook(event as unknown as Webhook, repos);
+			});
 
-		// 2. Create and register ConfigUpdater
+			// Listen for errors
+			cliEventTransport.on("error", (error: Error) => {
+				this.handleError(error);
+			});
+
+			// Register the CLI event transport endpoints
+			cliEventTransport.register();
+
+			console.log("✅ CLI event transport registered");
+			console.log(
+				"   Event listener: listening for AgentSessionCreated events",
+			);
+		} else {
+			// Linear mode: Create and register LinearEventTransport
+			const useDirectWebhooks =
+				process.env.LINEAR_DIRECT_WEBHOOKS?.toLowerCase() === "true";
+			const verificationMode = useDirectWebhooks ? "direct" : "proxy";
+
+			// Get appropriate secret based on mode
+			const secret = useDirectWebhooks
+				? process.env.LINEAR_WEBHOOK_SECRET || ""
+				: process.env.CYRUS_API_KEY || "";
+
+			this.linearEventTransport = new LinearEventTransport({
+				fastifyServer: this.sharedApplicationServer.getFastifyInstance(),
+				verificationMode,
+				secret,
+			});
+
+			// Listen for webhook events
+			this.linearEventTransport.on("event", (event: AgentEvent) => {
+				// Get all active repositories for webhook handling
+				const repos = Array.from(this.repositories.values());
+				this.handleWebhook(event as unknown as Webhook, repos);
+			});
+
+			// Listen for errors
+			this.linearEventTransport.on("error", (error: Error) => {
+				this.handleError(error);
+			});
+
+			// Register the /webhook endpoint
+			this.linearEventTransport.register();
+
+			console.log(
+				`✅ Linear event transport registered (${verificationMode} mode)`,
+			);
+			console.log(
+				`   Webhook endpoint: ${this.sharedApplicationServer.getWebhookUrl()}`,
+			);
+		}
+
+		// 2. Create and register ConfigUpdater (both platforms)
 		this.configUpdater = new ConfigUpdater(
 			this.sharedApplicationServer.getFastifyInstance(),
 			this.cyrusHome,
@@ -800,13 +873,22 @@ export class EdgeWorker extends EventEmitter {
 				// Add to internal map
 				this.repositories.set(repo.id, resolvedRepo);
 
-				// Create issue tracker - store raw client, create stable proxy
-				const rawClient = new LinearClient({
-					accessToken: repo.linearToken,
-				});
-				this.rawLinearClients.set(repo.id, rawClient);
-				const clientProxy = this.createLinearClientProxy(repo.id);
-				const issueTracker = new LinearIssueTrackerService(clientProxy);
+				// Create issue tracker - CLI mode uses in-memory, otherwise Linear with proxy
+				const issueTracker =
+					this.config.platform === "cli"
+						? (() => {
+								const service = new CLIIssueTrackerService();
+								service.seedDefaultData();
+								return service;
+							})()
+						: (() => {
+								const rawClient = new LinearClient({
+									accessToken: repo.linearToken,
+								});
+								this.rawLinearClients.set(repo.id, rawClient);
+								const clientProxy = this.createLinearClientProxy(repo.id);
+								return new LinearIssueTrackerService(clientProxy);
+							})();
 				this.issueTrackers.set(repo.id, issueTracker);
 
 				// Create AgentSessionManager with same pattern as constructor
@@ -889,14 +971,21 @@ export class EdgeWorker extends EventEmitter {
 				// Update stored config
 				this.repositories.set(repo.id, resolvedRepo);
 
-				// If token changed, just update the raw client - proxy automatically uses it
+				// If token changed, update appropriately for mode
 				if (oldRepo.linearToken !== repo.linearToken) {
-					console.log(`  🔑 Token changed, updating raw client`);
-					const newRawClient = new LinearClient({
-						accessToken: repo.linearToken,
-					});
-					this.rawLinearClients.set(repo.id, newRawClient);
-					// No need to update issueTracker - the proxy automatically uses the new client
+					if (this.config.platform === "cli") {
+						console.log(`  🔑 Token changed, recreating CLI issue tracker`);
+						const service = new CLIIssueTrackerService();
+						service.seedDefaultData();
+						this.issueTrackers.set(repo.id, service);
+					} else {
+						console.log(`  🔑 Token changed, updating raw client`);
+						const newRawClient = new LinearClient({
+							accessToken: repo.linearToken,
+						});
+						this.rawLinearClients.set(repo.id, newRawClient);
+						// No need to update issueTracker - the proxy automatically uses the new client
+					}
 				}
 
 				// If active status changed
@@ -1142,12 +1231,10 @@ export class EdgeWorker extends EventEmitter {
 		await this.moveIssueToStartedState(fullIssue, repository.id);
 
 		// Create workspace using full issue data
+		// Use custom handler if provided, otherwise create a git worktree by default
 		const workspace = this.config.handlers?.createWorkspace
 			? await this.config.handlers.createWorkspace(fullIssue, repository)
-			: {
-					path: `${repository.workspaceBaseDir}/${fullIssue.identifier}`,
-					isGitWorktree: false,
-				};
+			: await this.gitService.createGitWorktree(fullIssue, repository);
 
 		console.log(`[EdgeWorker] Workspace created at: ${workspace.path}`);
 
@@ -1587,7 +1674,7 @@ export class EdgeWorker extends EventEmitter {
 			// Save state after mapping changes
 			await this.savePersistedState();
 
-			// Emit events using full Linear issue
+			// Emit events using full issue (core Issue type)
 			this.emit("session:started", fullIssue.id, fullIssue, repository.id);
 			this.config.handlers?.onSessionStart?.(
 				fullIssue.id,
@@ -1802,7 +1889,7 @@ export class EdgeWorker extends EventEmitter {
 
 		let session = agentSessionManager.getSession(linearAgentActivitySessionId);
 		let isNewSession = false;
-		let fullIssue: LinearIssue | null = null;
+		let fullIssue: Issue | null = null;
 
 		if (!session) {
 			console.log(
@@ -1835,6 +1922,7 @@ export class EdgeWorker extends EventEmitter {
 
 			// Save state and emit events for new session
 			await this.savePersistedState();
+			// Emit events using full issue (core Issue type)
 			this.emit("session:started", fullIssue.id, fullIssue, repository.id);
 			this.config.handlers?.onSessionStart?.(
 				fullIssue.id,
@@ -2111,7 +2199,7 @@ export class EdgeWorker extends EventEmitter {
 	/**
 	 * Fetch issue labels for a given issue
 	 */
-	private async fetchIssueLabels(issue: LinearIssue): Promise<string[]> {
+	private async fetchIssueLabels(issue: Issue): Promise<string[]> {
 		try {
 			const labels = await issue.labels();
 			return labels.nodes.map((label) => label.name);
@@ -2300,7 +2388,7 @@ export class EdgeWorker extends EventEmitter {
 	 * @returns Formatted prompt string
 	 */
 	private async buildLabelBasedPrompt(
-		issue: LinearIssue,
+		issue: Issue,
 		repository: RepositoryConfig,
 		attachmentManifest: string = "",
 		guidance?: GuidanceRule[],
@@ -2463,7 +2551,7 @@ export class EdgeWorker extends EventEmitter {
 	 * @returns The constructed prompt and optional version tag
 	 */
 	private async buildMentionPrompt(
-		issue: LinearIssue,
+		issue: Issue,
 		agentSession: WebhookAgentSession,
 		attachmentManifest: string = "",
 		guidance?: GuidanceRule[],
@@ -2559,40 +2647,10 @@ Focus on addressing the specific request in the mention. You can use the Linear 
 	}
 
 	/**
-	 * Check if a branch exists locally or remotely
-	 */
-	private async branchExists(
-		branchName: string,
-		repoPath: string,
-	): Promise<boolean> {
-		const { execSync } = await import("node:child_process");
-		try {
-			// Check if branch exists locally
-			execSync(`git rev-parse --verify "${branchName}"`, {
-				cwd: repoPath,
-				stdio: "pipe",
-			});
-			return true;
-		} catch {
-			// Branch doesn't exist locally, check remote
-			try {
-				execSync(`git ls-remote --heads origin "${branchName}"`, {
-					cwd: repoPath,
-					stdio: "pipe",
-				});
-				return true;
-			} catch {
-				// Branch doesn't exist remotely either
-				return false;
-			}
-		}
-	}
-
-	/**
 	 * Determine the base branch for an issue, considering parent issues
 	 */
 	private async determineBaseBranch(
-		issue: LinearIssue,
+		issue: Issue,
 		repository: RepositoryConfig,
 	): Promise<string> {
 		// Start with the repository's default base branch
@@ -2613,10 +2671,11 @@ Focus on addressing the specific request in the mention. You can use the Linear 
 						?.toLowerCase()
 						.replace(/\s+/g, "-")
 						.substring(0, 30)}`;
-				const parentBranchName = this.sanitizeBranchName(parentRawBranchName);
+				const parentBranchName =
+					this.gitService.sanitizeBranchName(parentRawBranchName);
 
 				// Check if parent branch exists
-				const parentBranchExists = await this.branchExists(
+				const parentBranchExists = await this.gitService.branchExists(
 					parentBranchName,
 					repository.repositoryPath,
 				);
@@ -2645,7 +2704,7 @@ Focus on addressing the specific request in the mention. You can use the Linear 
 	/**
 	 * Convert full Linear SDK issue to CoreIssue interface for Session creation
 	 */
-	private convertLinearIssueToCore(issue: LinearIssue): IssueMinimal {
+	private convertLinearIssueToCore(issue: Issue): IssueMinimal {
 		return {
 			id: issue.id,
 			identifier: issue.identifier,
@@ -2653,13 +2712,6 @@ Focus on addressing the specific request in the mention. You can use the Linear 
 			description: issue.description || undefined,
 			branchName: issue.branchName, // Use the real branchName property!
 		};
-	}
-
-	/**
-	 * Sanitize branch name by removing backticks to prevent command injection
-	 */
-	private sanitizeBranchName(name: string): string {
-		return name ? name.replace(/`/g, "") : name;
 	}
 
 	/**
@@ -2760,7 +2812,7 @@ ${reply.body}
 	 * @returns Formatted prompt string
 	 */
 	private async buildIssueContextPrompt(
-		issue: LinearIssue,
+		issue: Issue,
 		repository: RepositoryConfig,
 		newComment?: WebhookComment,
 		attachmentManifest: string = "",
@@ -2850,7 +2902,10 @@ ${reply.body}
 						: repository.repositoryPath,
 				)
 				.replace(/{{base_branch}}/g, baseBranch)
-				.replace(/{{branch_name}}/g, this.sanitizeBranchName(issue.branchName));
+				.replace(
+					/{{branch_name}}/g,
+					this.gitService.sanitizeBranchName(issue.branchName),
+				);
 
 			// Handle the optional new comment section
 			if (newComment) {
@@ -3000,7 +3055,7 @@ ${newComment ? `New comment to address:\n${newComment.body}\n\n` : ""}Please ana
 	 */
 
 	private async moveIssueToStartedState(
-		issue: LinearIssue,
+		issue: Issue,
 		repositoryId: string,
 	): Promise<void> {
 		try {
@@ -3152,7 +3207,7 @@ ${newComment ? `New comment to address:\n${newComment.body}\n\n` : ""}Please ana
 	 * @param workspacePath Path to workspace directory
 	 */
 	private async downloadIssueAttachments(
-		issue: LinearIssue,
+		issue: Issue,
 		repository: RepositoryConfig,
 		workspacePath: string,
 	): Promise<{ manifest: string; attachmentsDir: string | null }> {
@@ -3827,7 +3882,7 @@ ${newComment ? `New comment to address:\n${newComment.body}\n\n` : ""}Please ana
 	private async buildSessionPrompt(
 		isNewSession: boolean,
 		session: CyrusAgentSession,
-		fullIssue: LinearIssue,
+		fullIssue: Issue,
 		repository: RepositoryConfig,
 		promptBody: string,
 		attachmentManifest?: string,
@@ -4160,7 +4215,7 @@ ${input.userComment}
 	 * Adapter method for prompt assembly - routes to appropriate issue context builder
 	 */
 	private async buildIssueContextForPromptAssembly(
-		issue: LinearIssue,
+		issue: Issue,
 		repository: RepositoryConfig,
 		promptType: PromptType,
 		attachmentManifest?: string,
@@ -5266,7 +5321,7 @@ ${input.userComment}
 	public async fetchFullIssueDetails(
 		issueId: string,
 		repositoryId: string,
-	): Promise<LinearIssue | null> {
+	): Promise<Issue | null> {
 		const issueTracker = this.issueTrackers.get(repositoryId);
 		if (!issueTracker) {
 			console.warn(

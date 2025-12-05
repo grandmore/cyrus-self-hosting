@@ -27,6 +27,7 @@ describe("SharedApplicationServer OAuth", () => {
 		server = new SharedApplicationServer(
 			3456,
 			"localhost",
+			false, // skipTunnel
 			mockConfigSaveCallback,
 		);
 	});
