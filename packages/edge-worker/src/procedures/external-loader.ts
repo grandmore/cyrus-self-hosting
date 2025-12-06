@@ -36,6 +36,15 @@ const externalSystemPrompts = new Map<string, string>();
 // Set of external prompt types (collected from registry.js PROMPT_TYPES exports)
 const externalPromptTypes = new Set<string>();
 
+// Track what was loaded per workflow for better logging
+interface WorkflowLoadSummary {
+	subroutines: string[];
+	procedures: string[];
+	classifications: Array<{ classification: string; procedure: string }>;
+	systemPrompts: string[];
+	promptTypes: string[];
+}
+
 /**
  * Initialize external workflows by scanning ~/.cyrus/workflows/
  * This runs once when the module is first imported
@@ -45,6 +54,9 @@ async function initializeExternalWorkflows() {
 		return;
 	}
 
+	// Track what was loaded per workflow
+	const workflowSummaries = new Map<string, WorkflowLoadSummary>();
+
 	try {
 		const entries = readdirSync(WORKFLOWS_DIR, { withFileTypes: true });
 
@@ -53,6 +65,13 @@ async function initializeExternalWorkflows() {
 
 			const workflowName = entry.name;
 			const workflowPath = join(WORKFLOWS_DIR, workflowName);
+			const summary: WorkflowLoadSummary = {
+				subroutines: [],
+				procedures: [],
+				classifications: [],
+				systemPrompts: [],
+				promptTypes: [],
+			};
 
 			// Load procedures from registry.js
 			const registryPath = join(workflowPath, "registry.js");
@@ -66,9 +85,7 @@ async function initializeExternalWorkflows() {
 						for (const [, subroutine] of Object.entries(module.SUBROUTINES)) {
 							const sub = subroutine as SubroutineDefinition;
 							externalSubroutines.set(sub.name, sub);
-							console.log(
-								`[External Workflow] Loaded subroutine "${sub.name}" from ${registryPath}`,
-							);
+							summary.subroutines.push(sub.name);
 						}
 					}
 
@@ -76,9 +93,7 @@ async function initializeExternalWorkflows() {
 					if (module.PROCEDURES && typeof module.PROCEDURES === "object") {
 						for (const [name, procedure] of Object.entries(module.PROCEDURES)) {
 							externalProcedures.set(name, procedure as ProcedureDefinition);
-							console.log(
-								`[External Workflow] Loaded procedure "${name}" from ${registryPath}`,
-							);
+							summary.procedures.push(name);
 						}
 					}
 
@@ -94,9 +109,10 @@ async function initializeExternalWorkflows() {
 								classification as RequestClassification,
 								procedureName as string,
 							);
-							console.log(
-								`[External Workflow] Mapped classification "${classification}" → "${procedureName}" from ${registryPath}`,
-							);
+							summary.classifications.push({
+								classification,
+								procedure: procedureName as string,
+							});
 						}
 					}
 
@@ -104,9 +120,7 @@ async function initializeExternalWorkflows() {
 					if (Array.isArray(module.PROMPT_TYPES)) {
 						for (const promptType of module.PROMPT_TYPES) {
 							externalPromptTypes.add(promptType);
-							console.log(
-								`[External Workflow] Registered prompt type "${promptType}" from ${registryPath}`,
-							);
+							summary.promptTypes.push(promptType);
 						}
 					}
 				} catch (error) {
@@ -134,9 +148,7 @@ async function initializeExternalWorkflows() {
 
 						// Later workflows override earlier ones
 						externalSystemPrompts.set(promptType, promptPath);
-						console.log(
-							`[External Workflow] Loaded system prompt "${promptType}" from ${promptPath}`,
-						);
+						summary.systemPrompts.push(promptType);
 					}
 				} catch (error) {
 					console.debug(
@@ -145,6 +157,65 @@ async function initializeExternalWorkflows() {
 					);
 				}
 			}
+
+			// Only add to summaries if we loaded anything
+			if (
+				summary.subroutines.length > 0 ||
+				summary.procedures.length > 0 ||
+				summary.classifications.length > 0 ||
+				summary.systemPrompts.length > 0 ||
+				summary.promptTypes.length > 0
+			) {
+				workflowSummaries.set(workflowName, summary);
+			}
+		}
+
+		// Output structured summary after all workflows are loaded
+		for (const [workflowName, summary] of workflowSummaries) {
+			// Use bold cyan for workflow name to make it stand out
+			console.log(
+				`\n[External Workflow] Loaded workflow: \x1b[1;36m${workflowName}\x1b[0m`,
+			);
+
+			if (summary.subroutines.length > 0) {
+				// Cyan for "Subroutines:" label
+				console.log(
+					`  \x1b[36mSubroutines:\x1b[0m ${summary.subroutines.join(", ")}`,
+				);
+			}
+
+			if (summary.procedures.length > 0) {
+				// Green for "Procedures:" label
+				console.log(
+					`  \x1b[32mProcedures:\x1b[0m ${summary.procedures.join(", ")}`,
+				);
+			}
+
+			if (summary.classifications.length > 0) {
+				const mappings = summary.classifications
+					.map((c) => `${c.classification} → ${c.procedure}`)
+					.join(", ");
+				// Yellow for "Classifications:" label
+				console.log(`  \x1b[33mClassifications:\x1b[0m ${mappings}`);
+			}
+
+			if (summary.systemPrompts.length > 0) {
+				// Magenta for "System Prompts:" label
+				console.log(
+					`  \x1b[35mSystem Prompts:\x1b[0m ${summary.systemPrompts.join(", ")}`,
+				);
+			}
+
+			if (summary.promptTypes.length > 0) {
+				// Blue for "Prompt Types:" label
+				console.log(
+					`  \x1b[34mPrompt Types:\x1b[0m ${summary.promptTypes.join(", ")}`,
+				);
+			}
+		}
+
+		if (workflowSummaries.size > 0) {
+			console.log(""); // Empty line after all workflows
 		}
 	} catch (error) {
 		console.debug(
@@ -194,16 +265,10 @@ export function getSystemPromptPath(
 ): string {
 	const externalPath = externalSystemPrompts.get(promptType);
 	if (externalPath) {
-		console.log(
-			`[External Workflow] Using external ${promptType} system prompt from ${externalPath}`,
-		);
 		return externalPath;
 	}
 
 	const internalPath = join(internalPromptsDir, `${promptType}.md`);
-	console.log(
-		`[External Workflow] Using internal ${promptType} system prompt from ${internalPath}`,
-	);
 	return internalPath;
 }
 
@@ -314,14 +379,9 @@ async function loadEdgeWorker(): Promise<typeof InternalEdgeWorker> {
 			const module = await import(`${externalUrl}?t=${Date.now()}`);
 
 			if (module.EdgeWorker) {
-				console.log(
-					`[External Workflow] Using external EdgeWorker from ${EXTERNAL_EDGE_WORKER_PATH}`,
-				);
+				console.log(`[External Workflow] Using external EdgeWorker`);
 				return module.EdgeWorker;
 			}
-			console.log(
-				`[External Workflow] External EdgeWorker found but no EdgeWorker export, using internal`,
-			);
 		} catch (error) {
 			console.error(
 				`[External Workflow] Failed to load external EdgeWorker:`,
