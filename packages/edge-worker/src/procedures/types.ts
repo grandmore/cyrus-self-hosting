@@ -1,5 +1,5 @@
 /**
- * Type definitions for the procedure routing system
+ * Type definitions for the procedure analysis system
  */
 
 /**
@@ -65,7 +65,7 @@ export interface ProcedureMetadata {
 }
 
 /**
- * Request classification types for routing decisions
+ * Request classification types for analysis decisions
  */
 export type RequestClassification =
 	| "question"
@@ -74,12 +74,13 @@ export type RequestClassification =
 	| "planning"
 	| "code"
 	| "debugger"
-	| "orchestrator";
+	| "orchestrator"
+	| "user-testing";
 
 /**
- * Result of procedure routing decision
+ * Result of procedure analysis decision
  */
-export interface RoutingDecision {
+export interface ProcedureAnalysisDecision {
 	/** Classification of the request */
 	classification: RequestClassification;
 

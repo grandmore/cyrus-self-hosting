@@ -1,6 +1,6 @@
 import { basename, extname } from "node:path";
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
-import { LinearClient } from "@linear/sdk";
+import { IssueRelationType, LinearClient } from "@linear/sdk";
 import fs from "fs-extra";
 import { z } from "zod";
 
@@ -530,6 +530,117 @@ export function createCyrusToolsServer(
 		},
 	);
 
+	const setIssueRelationTool = tool(
+		"linear_set_issue_relation",
+		"Create a relationship between two Linear issues. Use this to set 'blocks', 'related', or 'duplicate' relationships. For Graphite stacking workflows, use 'blocks' type where the blocking issue is the one that must be completed first.",
+		{
+			issueId: z
+				.string()
+				.describe(
+					"The BLOCKING issue (the one that must complete first). For 'blocks' type: this issue blocks relatedIssueId. Example: 'PROJ-123' or UUID",
+				),
+			relatedIssueId: z
+				.string()
+				.describe(
+					"The BLOCKED issue (the one that depends on issueId). For 'blocks' type: this issue is blocked by issueId. Example: 'PROJ-124' or UUID",
+				),
+			type: z
+				.enum(["blocks", "related", "duplicate"])
+				.describe(
+					"The type of relation: 'blocks' (issueId blocks relatedIssueId - use for Graphite stacking), 'related' (issues are related), 'duplicate' (issueId is a duplicate of relatedIssue)",
+				),
+		},
+		async ({ issueId, relatedIssueId, type }) => {
+			try {
+				console.log(
+					`Creating ${type} relation: ${issueId} -> ${relatedIssueId} (${issueId} blocks ${relatedIssueId})`,
+				);
+
+				// Resolve issue identifiers to UUIDs if needed
+				const issue = await linearClient.issue(issueId);
+				const relatedIssue = await linearClient.issue(relatedIssueId);
+
+				if (!issue) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: JSON.stringify({
+									success: false,
+									error: `Issue ${issueId} not found`,
+								}),
+							},
+						],
+					};
+				}
+
+				if (!relatedIssue) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: JSON.stringify({
+									success: false,
+									error: `Related issue ${relatedIssueId} not found`,
+								}),
+							},
+						],
+					};
+				}
+
+				// Map string type to IssueRelationType enum
+				const relationTypeMap: Record<
+					"blocks" | "related" | "duplicate",
+					IssueRelationType
+				> = {
+					blocks: IssueRelationType.Blocks,
+					related: IssueRelationType.Related,
+					duplicate: IssueRelationType.Duplicate,
+				};
+				const relationType = relationTypeMap[type];
+
+				// Create the issue relation
+				const result = await linearClient.createIssueRelation({
+					issueId: issue.id,
+					relatedIssueId: relatedIssue.id,
+					type: relationType,
+				});
+
+				const relation = await result.issueRelation;
+
+				console.log(
+					`Created ${type} relation: ${issue.identifier} ${type} ${relatedIssue.identifier}`,
+				);
+
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: JSON.stringify({
+								success: true,
+								relationId: relation?.id,
+								message: `Successfully created '${type}' relation: ${issue.identifier} ${type} ${relatedIssue.identifier}`,
+							}),
+						},
+					],
+				};
+			} catch (error) {
+				console.error(`Error creating issue relation for ${issueId}:`, error);
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: JSON.stringify({
+								success: false,
+								error: error instanceof Error ? error.message : String(error),
+							}),
+						},
+					],
+				};
+			}
+		},
+	);
+
 	const getChildIssuesTool = tool(
 		"linear_get_child_issues",
 		"Get all child issues (sub-issues) for a given Linear issue. Takes an issue identifier like 'CYHOST-91' and returns a list of child issue ids and their titles.",
@@ -680,6 +791,7 @@ export function createCyrusToolsServer(
 			agentSessionTool,
 			agentSessionOnCommentTool,
 			giveFeedbackTool,
+			setIssueRelationTool,
 			getChildIssuesTool,
 		],
 	});
