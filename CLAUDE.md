@@ -2,6 +2,23 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Upstream Relationship
+
+This repository is a fork of [ceedaragents/cyrus](https://github.com/ceedaragents/cyrus). We periodically sync with upstream to incorporate their latest changes, but we **never push to or create PRs against their repository**.
+
+**Sync strategy:**
+- We pull changes FROM upstream (read-only relationship)
+- We adapt to their naming conventions and code structure
+- We preserve and extend with our own workflow modifications
+- All PRs go to `grandmore/cyrus` (this fork), never to `ceedaragents/cyrus`
+
+**Our current enhancments to Cyrus include:**
+- External workflow loading system (`~/.cyrus/workflows/`)
+- Custom workflow documentation and template overloading
+- Enhanced logging with color formatting
+  
+When merging upstream changes, use their naming/structure but preserve our extensions.
+
 ## Project Overview
 
 Cyrus (Linear Claude Agent) is a monorepo JavaScript/TypeScript application that integrates Linear's issue tracking with Anthropic's Claude Code to automate software development tasks. The project is transitioning to an edge-proxy architecture that separates OAuth/webhook handling (proxy) from Claude processing (edge workers).
@@ -60,6 +77,8 @@ To see Cyrus in action, refer to the test drives in `apps/f1/test-drives/`. Thes
 - Final repository state after completion
 
 The F1 (Formula 1) testing framework provides a controlled environment to test Cyrus without affecting production Linear workspaces.
+
+CRITICAL: you must use the f1 test drive protocol during the 'testing and validation' stage of any major work undertaking. You CAN also use it in development situations where you want to test drive the version of the product that you're working on.
 
 ## Working with SDKs
 

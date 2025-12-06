@@ -68,8 +68,8 @@ import { fileTypeFromBuffer } from "file-type";
 import { AgentSessionManager } from "./AgentSessionManager.js";
 import { GitService } from "./GitService.js";
 import {
+	ProcedureAnalyzer,
 	type ProcedureDefinition,
-	ProcedureRouter,
 	type RequestClassification,
 	type SubroutineDefinition,
 } from "./procedures/index.js";
@@ -117,7 +117,7 @@ export class EdgeWorker extends EventEmitter {
 	private cyrusHome: string;
 	private childToParentAgentSession: Map<string, string> = new Map(); // Maps child agentSessionId to parent agentSessionId
 	private rawLinearClients: Map<string, LinearClient> = new Map(); // Raw clients - proxies delegate to these
-	private procedureRouter: ProcedureRouter; // Intelligent workflow routing
+	private procedureAnalyzer: ProcedureAnalyzer; // Intelligent workflow routing
 	private configWatcher?: FSWatcher; // File watcher for config.json
 	private configPath?: string; // Path to config.json file
 	/** @internal - Exposed for testing only */
@@ -138,7 +138,7 @@ export class EdgeWorker extends EventEmitter {
 
 		// Initialize procedure router with haiku for fast classification
 		// Default to claude runner
-		this.procedureRouter = new ProcedureRouter({
+		this.procedureAnalyzer = new ProcedureAnalyzer({
 			cyrusHome: this.cyrusHome,
 			model: "haiku",
 			timeoutMs: 100000,
@@ -267,7 +267,7 @@ export class EdgeWorker extends EventEmitter {
 							agentSessionManager,
 						);
 					},
-					this.procedureRouter,
+					this.procedureAnalyzer,
 					this.sharedApplicationServer,
 				);
 
@@ -609,7 +609,7 @@ export class EdgeWorker extends EventEmitter {
 		);
 
 		// Get next subroutine (advancement already handled by AgentSessionManager)
-		const nextSubroutine = this.procedureRouter.getCurrentSubroutine(session);
+		const nextSubroutine = this.procedureAnalyzer.getCurrentSubroutine(session);
 
 		if (!nextSubroutine) {
 			console.log(
@@ -906,7 +906,7 @@ export class EdgeWorker extends EventEmitter {
 							agentSessionManager,
 						);
 					},
-					this.procedureRouter,
+					this.procedureAnalyzer,
 					this.sharedApplicationServer,
 				);
 
@@ -1487,7 +1487,9 @@ export class EdgeWorker extends EventEmitter {
 		}
 
 		// Post ephemeral "Routing..." thought
-		await agentSessionManager.postRoutingThought(linearAgentActivitySessionId);
+		await agentSessionManager.postAnalyzingThought(
+			linearAgentActivitySessionId,
+		);
 
 		// Fetch labels early (needed for label override check)
 		const labels = await this.fetchIssueLabels(fullIssue);
@@ -1504,10 +1506,21 @@ export class EdgeWorker extends EventEmitter {
 		const orchestratorConfig = repository.labelPrompts?.orchestrator;
 		const orchestratorLabels = Array.isArray(orchestratorConfig)
 			? orchestratorConfig
-			: orchestratorConfig?.labels;
+			: (orchestratorConfig?.labels ?? ["orchestrator"]);
 		const hasOrchestratorLabel = orchestratorLabels?.some((label) =>
 			labels.includes(label),
 		);
+
+		// Check for graphite label (for graphite-orchestrator combination)
+		const graphiteConfig = repository.labelPrompts?.graphite;
+		const graphiteLabels = graphiteConfig?.labels ?? ["graphite"];
+		const hasGraphiteLabel = graphiteLabels?.some((label) =>
+			labels.includes(label),
+		);
+
+		// Graphite-orchestrator requires BOTH graphite AND orchestrator labels
+		const hasGraphiteOrchestratorLabels =
+			hasGraphiteLabel && hasOrchestratorLabel;
 
 		let finalProcedure: ProcedureDefinition;
 		let finalClassification: RequestClassification;
@@ -1515,7 +1528,7 @@ export class EdgeWorker extends EventEmitter {
 		// If labels indicate a specific procedure, use that instead of AI routing
 		if (hasDebuggerLabel) {
 			const debuggerProcedure =
-				this.procedureRouter.getProcedure("debugger-full");
+				this.procedureAnalyzer.getProcedure("debugger-full");
 			if (!debuggerProcedure) {
 				throw new Error("debugger-full procedure not found in registry");
 			}
@@ -1524,9 +1537,22 @@ export class EdgeWorker extends EventEmitter {
 			console.log(
 				`[EdgeWorker] Using debugger-full procedure due to debugger label (skipping AI routing)`,
 			);
+		} else if (hasGraphiteOrchestratorLabels) {
+			// Graphite-orchestrator takes precedence over regular orchestrator when both labels present
+			const orchestratorProcedure =
+				this.procedureAnalyzer.getProcedure("orchestrator-full");
+			if (!orchestratorProcedure) {
+				throw new Error("orchestrator-full procedure not found in registry");
+			}
+			finalProcedure = orchestratorProcedure;
+			// Use orchestrator classification but the system prompt will be graphite-orchestrator
+			finalClassification = "orchestrator";
+			console.log(
+				`[EdgeWorker] Using orchestrator-full procedure with graphite-orchestrator prompt (graphite + orchestrator labels)`,
+			);
 		} else if (hasOrchestratorLabel) {
 			const orchestratorProcedure =
-				this.procedureRouter.getProcedure("orchestrator-full");
+				this.procedureAnalyzer.getProcedure("orchestrator-full");
 			if (!orchestratorProcedure) {
 				throw new Error("orchestrator-full procedure not found in registry");
 			}
@@ -1540,7 +1566,7 @@ export class EdgeWorker extends EventEmitter {
 			const issueDescription =
 				`${issue.title}\n\n${fullIssue.description || ""}`.trim();
 			const routingDecision =
-				await this.procedureRouter.determineRoutine(issueDescription);
+				await this.procedureAnalyzer.determineRoutine(issueDescription);
 			finalProcedure = routingDecision.procedure;
 			finalClassification = routingDecision.classification;
 
@@ -1554,7 +1580,7 @@ export class EdgeWorker extends EventEmitter {
 		}
 
 		// Initialize procedure metadata in session with final decision
-		this.procedureRouter.initializeProcedureMetadata(session, finalProcedure);
+		this.procedureAnalyzer.initializeProcedureMetadata(session, finalProcedure);
 
 		// Post single procedure selection result (replaces ephemeral routing thought)
 		await agentSessionManager.postProcedureSelectionThought(
@@ -1594,6 +1620,7 @@ export class EdgeWorker extends EventEmitter {
 				| "builder"
 				| "scoper"
 				| "orchestrator"
+				| "graphite-orchestrator"
 				| undefined;
 
 			if (!isMentionTriggered || isLabelBasedPromptRequested) {
@@ -1641,7 +1668,7 @@ export class EdgeWorker extends EventEmitter {
 
 			// Get current subroutine to check for singleTurn mode
 			const currentSubroutine =
-				this.procedureRouter.getCurrentSubroutine(session);
+				this.procedureAnalyzer.getCurrentSubroutine(session);
 
 			// Create agent runner with system prompt from assembly
 			// buildAgentRunnerConfig now determines runner type from labels internally
@@ -2314,12 +2341,69 @@ export class EdgeWorker extends EventEmitter {
 		| {
 				prompt: string;
 				version?: string;
-				type?: "debugger" | "builder" | "scoper" | "orchestrator";
+				type?:
+					| "debugger"
+					| "builder"
+					| "scoper"
+					| "orchestrator"
+					| "graphite-orchestrator";
 		  }
 		| undefined
 	> {
 		if (!repository.labelPrompts || labels.length === 0) {
 			return undefined;
+		}
+
+		// Check for graphite-orchestrator first (requires BOTH graphite AND orchestrator labels)
+		const graphiteConfig = repository.labelPrompts.graphite;
+		const graphiteLabels = graphiteConfig?.labels ?? ["graphite"];
+		const hasGraphiteLabel = graphiteLabels?.some((label) =>
+			labels.includes(label),
+		);
+
+		const orchestratorConfig = repository.labelPrompts.orchestrator;
+		const orchestratorLabels = Array.isArray(orchestratorConfig)
+			? orchestratorConfig
+			: (orchestratorConfig?.labels ?? ["orchestrator"]);
+		const hasOrchestratorLabel = orchestratorLabels?.some((label) =>
+			labels.includes(label),
+		);
+
+		// If both graphite AND orchestrator labels are present, use graphite-orchestrator prompt
+		if (hasGraphiteLabel && hasOrchestratorLabel) {
+			try {
+				const __filename = fileURLToPath(import.meta.url);
+				const __dirname = dirname(__filename);
+				const promptPath = join(
+					__dirname,
+					"..",
+					"prompts",
+					"graphite-orchestrator.md",
+				);
+				const promptContent = await readFile(promptPath, "utf-8");
+				console.log(
+					`[EdgeWorker] Using graphite-orchestrator system prompt for labels: ${labels.join(", ")}`,
+				);
+
+				const promptVersion = this.extractVersionTag(promptContent);
+				if (promptVersion) {
+					console.log(
+						`[EdgeWorker] graphite-orchestrator system prompt version: ${promptVersion}`,
+					);
+				}
+
+				return {
+					prompt: promptContent,
+					version: promptVersion,
+					type: "graphite-orchestrator",
+				};
+			} catch (error) {
+				console.error(
+					`[EdgeWorker] Failed to load graphite-orchestrator prompt template:`,
+					error,
+				);
+				// Fall through to regular orchestrator if graphite-orchestrator prompt fails
+			}
 		}
 
 		// Check each prompt type for matching labels
@@ -2647,7 +2731,13 @@ Focus on addressing the specific request in the mention. You can use the Linear 
 	}
 
 	/**
-	 * Determine the base branch for an issue, considering parent issues
+	 * Determine the base branch for an issue, considering parent issues and blocked-by relationships
+	 *
+	 * Priority order:
+	 * 1. If issue has graphite label AND has a "blocked by" relationship, use the blocking issue's branch
+	 *    (This enables Graphite stacking where each sub-issue branches off the previous)
+	 * 2. If issue has a parent, use the parent's branch
+	 * 3. Fall back to repository's default base branch
 	 */
 	private async determineBaseBranch(
 		issue: Issue,
@@ -2656,7 +2746,51 @@ Focus on addressing the specific request in the mention. You can use the Linear 
 		// Start with the repository's default base branch
 		let baseBranch = repository.baseBranch;
 
-		// Check if issue has a parent
+		// Check if this issue has the graphite label - if so, blocked-by relationship takes priority
+		const isGraphiteIssue = await this.hasGraphiteLabel(issue, repository);
+
+		if (isGraphiteIssue) {
+			// For Graphite stacking: use the blocking issue's branch as base
+			const blockingIssues = await this.fetchBlockingIssues(issue);
+
+			if (blockingIssues.length > 0) {
+				// Use the first blocking issue's branch (typically there's only one in a stack)
+				const blockingIssue = blockingIssues[0]!;
+				console.log(
+					`[EdgeWorker] Issue ${issue.identifier} has graphite label and is blocked by ${blockingIssue.identifier}`,
+				);
+
+				// Get blocking issue's branch name
+				const blockingRawBranchName =
+					blockingIssue.branchName ||
+					`${blockingIssue.identifier}-${(blockingIssue.title ?? "")
+						.toLowerCase()
+						.replace(/\s+/g, "-")
+						.substring(0, 30)}`;
+				const blockingBranchName = this.gitService.sanitizeBranchName(
+					blockingRawBranchName,
+				);
+
+				// Check if blocking issue's branch exists
+				const blockingBranchExists = await this.gitService.branchExists(
+					blockingBranchName,
+					repository.repositoryPath,
+				);
+
+				if (blockingBranchExists) {
+					baseBranch = blockingBranchName;
+					console.log(
+						`[EdgeWorker] Using blocking issue branch '${blockingBranchName}' as base for Graphite-stacked issue ${issue.identifier}`,
+					);
+					return baseBranch;
+				}
+				console.log(
+					`[EdgeWorker] Blocking issue branch '${blockingBranchName}' not found, falling back to parent/default`,
+				);
+			}
+		}
+
+		// Check if issue has a parent (standard sub-issue behavior)
 		try {
 			const parent = await issue.parent;
 			if (parent) {
@@ -2712,6 +2846,76 @@ Focus on addressing the specific request in the mention. You can use the Linear 
 			description: issue.description || undefined,
 			branchName: issue.branchName, // Use the real branchName property!
 		};
+	}
+
+	/**
+	 * Fetch issues that block this issue (i.e., issues this one is "blocked by")
+	 * Uses the inverseRelations field with type "blocks"
+	 *
+	 * Linear relations work like this:
+	 * - When Issue A "blocks" Issue B, a relation is created with:
+	 *   - issue = A (the blocker)
+	 *   - relatedIssue = B (the blocked one)
+	 *   - type = "blocks"
+	 *
+	 * So to find "who blocks Issue B", we need inverseRelations (where B is the relatedIssue)
+	 * and look for type === "blocks", then get the `issue` field (the blocker).
+	 *
+	 * @param issue The issue to fetch blocking issues for
+	 * @returns Array of issues that block this one, or empty array if none
+	 */
+	private async fetchBlockingIssues(issue: Issue): Promise<Issue[]> {
+		try {
+			// inverseRelations contains relations where THIS issue is the relatedIssue
+			// When type is "blocks", it means the `issue` field blocks THIS issue
+			const inverseRelations = await issue.inverseRelations();
+			if (!inverseRelations?.nodes) {
+				return [];
+			}
+
+			const blockingIssues: Issue[] = [];
+
+			for (const relation of inverseRelations.nodes) {
+				// "blocks" type in inverseRelations means the `issue` blocks this one
+				if (relation.type === "blocks") {
+					// The `issue` field is the one that blocks THIS issue
+					const blockingIssue = await relation.issue;
+					if (blockingIssue) {
+						blockingIssues.push(blockingIssue);
+					}
+				}
+			}
+
+			console.log(
+				`[EdgeWorker] Issue ${issue.identifier} is blocked by ${blockingIssues.length} issue(s): ${blockingIssues.map((i) => i.identifier).join(", ") || "none"}`,
+			);
+
+			return blockingIssues;
+		} catch (error) {
+			console.error(
+				`[EdgeWorker] Failed to fetch blocking issues for ${issue.identifier}:`,
+				error,
+			);
+			return [];
+		}
+	}
+
+	/**
+	 * Check if an issue has the graphite label
+	 *
+	 * @param issue The issue to check
+	 * @param repository The repository configuration
+	 * @returns True if the issue has the graphite label
+	 */
+	private async hasGraphiteLabel(
+		issue: Issue,
+		repository: RepositoryConfig,
+	): Promise<boolean> {
+		const graphiteConfig = repository.labelPrompts?.graphite;
+		const graphiteLabels = graphiteConfig?.labels ?? ["graphite"];
+
+		const issueLabels = await this.fetchIssueLabels(issue);
+		return graphiteLabels.some((label) => issueLabels.includes(label));
 	}
 
 	/**
@@ -4015,7 +4219,7 @@ ${newComment ? `New comment to address:\n${newComment.body}\n\n` : ""}Please ana
 		components.push("issue-context");
 
 		// 4. Load and append initial subroutine prompt
-		const currentSubroutine = this.procedureRouter.getCurrentSubroutine(
+		const currentSubroutine = this.procedureAnalyzer.getCurrentSubroutine(
 			input.session,
 		);
 		let subroutineName: string | undefined;
@@ -4377,24 +4581,37 @@ ${input.userComment}
 	 */
 	private buildDisallowedTools(
 		repository: RepositoryConfig,
-		promptType?: "debugger" | "builder" | "scoper" | "orchestrator",
+		promptType?:
+			| "debugger"
+			| "builder"
+			| "scoper"
+			| "orchestrator"
+			| "graphite-orchestrator",
 	): string[] {
+		// graphite-orchestrator uses the same tool config as orchestrator
+		const effectivePromptType =
+			promptType === "graphite-orchestrator" ? "orchestrator" : promptType;
 		let disallowedTools: string[] = [];
 		let toolSource = "";
 
 		// Priority order (same as allowedTools):
 		// 1. Repository-specific prompt type configuration
-		if (promptType && repository.labelPrompts?.[promptType]?.disallowedTools) {
-			disallowedTools = repository.labelPrompts[promptType].disallowedTools;
-			toolSource = `repository label prompt (${promptType})`;
+		if (
+			effectivePromptType &&
+			repository.labelPrompts?.[effectivePromptType]?.disallowedTools
+		) {
+			disallowedTools =
+				repository.labelPrompts[effectivePromptType].disallowedTools;
+			toolSource = `repository label prompt (${effectivePromptType})`;
 		}
 		// 2. Global prompt type defaults
 		else if (
-			promptType &&
-			this.config.promptDefaults?.[promptType]?.disallowedTools
+			effectivePromptType &&
+			this.config.promptDefaults?.[effectivePromptType]?.disallowedTools
 		) {
-			disallowedTools = this.config.promptDefaults[promptType].disallowedTools;
-			toolSource = `global prompt defaults (${promptType})`;
+			disallowedTools =
+				this.config.promptDefaults[effectivePromptType].disallowedTools;
+			toolSource = `global prompt defaults (${effectivePromptType})`;
 		}
 		// 3. Repository-level disallowed tools
 		else if (repository.disallowedTools) {
@@ -4434,7 +4651,7 @@ ${input.userComment}
 		logContext: string,
 	): string[] {
 		const currentSubroutine =
-			this.procedureRouter.getCurrentSubroutine(session);
+			this.procedureAnalyzer.getCurrentSubroutine(session);
 		if (currentSubroutine?.disallowedTools) {
 			const mergedTools = [
 				...new Set([
@@ -4456,28 +4673,39 @@ ${input.userComment}
 	 */
 	private buildAllowedTools(
 		repository: RepositoryConfig,
-		promptType?: "debugger" | "builder" | "scoper" | "orchestrator",
+		promptType?:
+			| "debugger"
+			| "builder"
+			| "scoper"
+			| "orchestrator"
+			| "graphite-orchestrator",
 	): string[] {
+		// graphite-orchestrator uses the same tool config as orchestrator
+		const effectivePromptType =
+			promptType === "graphite-orchestrator" ? "orchestrator" : promptType;
 		let baseTools: string[] = [];
 		let toolSource = "";
 
 		// Priority order:
 		// 1. Repository-specific prompt type configuration
-		if (promptType && repository.labelPrompts?.[promptType]?.allowedTools) {
+		if (
+			effectivePromptType &&
+			repository.labelPrompts?.[effectivePromptType]?.allowedTools
+		) {
 			baseTools = this.resolveToolPreset(
-				repository.labelPrompts[promptType].allowedTools,
+				repository.labelPrompts[effectivePromptType].allowedTools,
 			);
-			toolSource = `repository label prompt (${promptType})`;
+			toolSource = `repository label prompt (${effectivePromptType})`;
 		}
 		// 2. Global prompt type defaults
 		else if (
-			promptType &&
-			this.config.promptDefaults?.[promptType]?.allowedTools
+			effectivePromptType &&
+			this.config.promptDefaults?.[effectivePromptType]?.allowedTools
 		) {
 			baseTools = this.resolveToolPreset(
-				this.config.promptDefaults[promptType].allowedTools,
+				this.config.promptDefaults[effectivePromptType].allowedTools,
 			);
-			toolSource = `global prompt defaults (${promptType})`;
+			toolSource = `global prompt defaults (${effectivePromptType})`;
 		}
 		// 3. Repository-level allowed tools
 		else if (repository.allowedTools) {
@@ -4816,7 +5044,9 @@ ${input.userComment}
 		}
 
 		// Post ephemeral "Routing..." thought
-		await agentSessionManager.postRoutingThought(linearAgentActivitySessionId);
+		await agentSessionManager.postAnalyzingThought(
+			linearAgentActivitySessionId,
+		);
 
 		// Fetch full issue and labels to check for Orchestrator label override
 		const issueTracker = this.issueTrackers.get(repository.id);
@@ -4831,7 +5061,7 @@ ${input.userComment}
 				const orchestratorConfig = repository.labelPrompts?.orchestrator;
 				const orchestratorLabels = Array.isArray(orchestratorConfig)
 					? orchestratorConfig
-					: orchestratorConfig?.labels;
+					: (orchestratorConfig?.labels ?? ["orchestrator"]);
 				hasOrchestratorLabel =
 					orchestratorLabels?.some((label) => labels.includes(label)) || false;
 			} catch (error) {
@@ -4849,7 +5079,7 @@ ${input.userComment}
 		// If Orchestrator label is present, ALWAYS use orchestrator-full procedure
 		if (hasOrchestratorLabel) {
 			const orchestratorProcedure =
-				this.procedureRouter.getProcedure("orchestrator-full");
+				this.procedureAnalyzer.getProcedure("orchestrator-full");
 			if (!orchestratorProcedure) {
 				throw new Error("orchestrator-full procedure not found in registry");
 			}
@@ -4860,7 +5090,7 @@ ${input.userComment}
 			);
 		} else {
 			// No Orchestrator label - use AI routing based on prompt content
-			const routingDecision = await this.procedureRouter.determineRoutine(
+			const routingDecision = await this.procedureAnalyzer.determineRoutine(
 				promptBody.trim(),
 			);
 			selectedProcedure = routingDecision.procedure;
@@ -4876,7 +5106,7 @@ ${input.userComment}
 		}
 
 		// Initialize procedure metadata in session (resets currentSubroutine)
-		this.procedureRouter.initializeProcedureMetadata(
+		this.procedureAnalyzer.initializeProcedureMetadata(
 			session,
 			selectedProcedure,
 		);
@@ -5048,7 +5278,7 @@ ${input.userComment}
 							const orchestratorConfig = repository.labelPrompts.orchestrator;
 							const orchestratorLabels = Array.isArray(orchestratorConfig)
 								? orchestratorConfig
-								: orchestratorConfig?.labels;
+								: (orchestratorConfig?.labels ?? ["orchestrator"]);
 							const orchestratorLabel = orchestratorLabels?.find((label) =>
 								labels.includes(label),
 							);
@@ -5202,7 +5432,7 @@ ${input.userComment}
 
 		// Get current subroutine to check for singleTurn mode
 		const currentSubroutine =
-			this.procedureRouter.getCurrentSubroutine(session);
+			this.procedureAnalyzer.getCurrentSubroutine(session);
 
 		const resumeSessionId = needsNewSession
 			? undefined
