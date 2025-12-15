@@ -1,8 +1,8 @@
 {
-	"name": "cyrus-monorepo",
+	"name": "kyros-monorepo",
 	"version": "1.0.1",
 	"private": true,
-	"description": "Monorepo for Cyrus - Linear Claude Agent integration",
+	"description": "Monorepo for Kyros - Grandmore private fork of Cyrus",
 	"packageManager": "pnpm@10.13.1",
 	"type": "module",
 	"scripts": {
@@ -21,17 +21,18 @@
 		"linear",
 		"claude",
 		"linear-agent",
-		"cyrus",
+		"kyros",
+		"grandmore",
 		"anthropic",
 		"ai",
 		"agent",
 		"monorepo"
 	],
-	"author": "Ceedar",
+	"author": "Grandmore",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/ceedaragents/cyrus"
+		"url": "https://github.com/grandmore/kyros"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.1.3",
