@@ -12,7 +12,8 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Run on Ubicloud infrastructure - 10x cheaper, 1.5x faster
+    runs-on: ubicloud-standard-2
     
     strategy:
       matrix:

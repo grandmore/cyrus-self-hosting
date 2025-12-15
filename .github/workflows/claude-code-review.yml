@@ -18,7 +18,8 @@ jobs:
     #   github.event.pull_request.user.login == 'new-developer' ||
     #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
 
-    runs-on: ubuntu-latest
+    # Run on Ubicloud infrastructure - 10x cheaper, 1.5x faster
+    runs-on: ubicloud-standard-2
     permissions:
       contents: read
       pull-requests: read

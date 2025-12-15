@@ -24,7 +24,7 @@ const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
 const program = new Command();
 
 program
-	.name("cyrus")
+	.name("kyros")
 	.description("AI-powered Linear issue automation using Claude")
 	.version(packageJson.version)
 	.option(
