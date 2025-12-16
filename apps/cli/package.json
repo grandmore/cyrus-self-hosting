@@ -5,7 +5,7 @@
 	"main": "dist/src/app.js",
 	"types": "dist/src/app.d.ts",
 	"bin": {
-		"kyros": "./dist/src/app.js"
+		"cyrus": "./dist/src/app.js"
 	},
 	"type": "module",
 	"scripts": {
