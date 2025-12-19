@@ -5644,11 +5644,20 @@ ${input.userComment}
 			refreshToken: repo.linearRefreshToken,
 			workspaceId,
 			onTokenRefresh: async (tokens) => {
-				// Update repository config state (for EdgeWorker's internal tracking)
-				for (const [, repository] of this.repositories) {
+				// Update all repositories AND their issueTrackers for this workspace
+				for (const [repoId, repository] of this.repositories) {
 					if (repository.linearWorkspaceId === workspaceId) {
+						// Update repository config state
 						repository.linearToken = tokens.accessToken;
 						repository.linearRefreshToken = tokens.refreshToken;
+
+						// Update the issueTracker's client with the new token
+						const issueTracker = this.issueTrackers.get(repoId);
+						if (issueTracker) {
+							(issueTracker as LinearIssueTrackerService).setAccessToken(
+								tokens.accessToken,
+							);
+						}
 					}
 				}
 
