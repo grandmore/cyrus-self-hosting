@@ -63,6 +63,7 @@ import { GeminiRunner } from "cyrus-gemini-runner";
 import {
 	LinearEventTransport,
 	LinearIssueTrackerService,
+	type LinearOAuthConfig,
 } from "cyrus-linear-event-transport";
 import { fileTypeFromBuffer } from "file-type";
 import { AgentSessionManager } from "./AgentSessionManager.js";
@@ -223,6 +224,7 @@ export class EdgeWorker extends EventEmitter {
 								new LinearClient({
 									accessToken: repo.linearToken,
 								}),
+								this.buildOAuthConfig(resolvedRepo),
 							);
 				this.issueTrackers.set(repo.id, issueTracker);
 
@@ -1050,6 +1052,7 @@ export class EdgeWorker extends EventEmitter {
 								new LinearClient({
 									accessToken: repo.linearToken,
 								}),
+								this.buildOAuthConfig(resolvedRepo),
 							);
 				this.issueTrackers.set(repo.id, issueTracker);
 
@@ -1186,6 +1189,7 @@ export class EdgeWorker extends EventEmitter {
 									new LinearClient({
 										accessToken: repo.linearToken,
 									}),
+									this.buildOAuthConfig(repo),
 								);
 					this.issueTrackers.set(repo.id, issueTracker);
 				}
@@ -5782,6 +5786,109 @@ ${input.userComment}
 				error,
 			);
 			return null;
+		}
+	}
+
+	/**
+	 * Build OAuth config for LinearIssueTrackerService.
+	 * Returns undefined if OAuth credentials are not available.
+	 */
+	private buildOAuthConfig(
+		repo: RepositoryConfig,
+	): LinearOAuthConfig | undefined {
+		const clientId = process.env.LINEAR_CLIENT_ID;
+		const clientSecret = process.env.LINEAR_CLIENT_SECRET;
+
+		if (!clientId || !clientSecret) {
+			console.warn(
+				"[EdgeWorker] LINEAR_CLIENT_ID and LINEAR_CLIENT_SECRET not set, token refresh disabled",
+			);
+			return undefined;
+		}
+
+		if (!repo.linearRefreshToken) {
+			console.warn(
+				`[EdgeWorker] No refresh token for repository ${repo.id}, token refresh disabled`,
+			);
+			return undefined;
+		}
+
+		const workspaceId = repo.linearWorkspaceId;
+		const workspaceName = repo.linearWorkspaceName || workspaceId;
+
+		return {
+			clientId,
+			clientSecret,
+			refreshToken: repo.linearRefreshToken,
+			workspaceId,
+			onTokenRefresh: async (tokens) => {
+				// Update all repositories AND their issueTrackers for this workspace
+				for (const [repoId, repository] of this.repositories) {
+					if (repository.linearWorkspaceId === workspaceId) {
+						// Update repository config state
+						repository.linearToken = tokens.accessToken;
+						repository.linearRefreshToken = tokens.refreshToken;
+
+						// Update the issueTracker's client with the new token
+						const issueTracker = this.issueTrackers.get(repoId);
+						if (issueTracker) {
+							(issueTracker as LinearIssueTrackerService).setAccessToken(
+								tokens.accessToken,
+							);
+						}
+					}
+				}
+
+				// Persist tokens to config.json
+				await this.saveOAuthTokens({
+					linearToken: tokens.accessToken,
+					linearRefreshToken: tokens.refreshToken,
+					linearWorkspaceId: workspaceId,
+					linearWorkspaceName: workspaceName,
+				});
+			},
+		};
+	}
+
+	/**
+	 * Save OAuth tokens to config.json
+	 */
+	private async saveOAuthTokens(tokens: {
+		linearToken: string;
+		linearRefreshToken?: string;
+		linearWorkspaceId: string;
+		linearWorkspaceName?: string;
+	}): Promise<void> {
+		if (!this.configPath) {
+			console.warn("[EdgeWorker] No config path set, cannot save OAuth tokens");
+			return;
+		}
+
+		try {
+			const configContent = await readFile(this.configPath, "utf-8");
+			const config = JSON.parse(configContent);
+
+			// Find and update all repositories with this workspace ID
+			if (config.repositories && Array.isArray(config.repositories)) {
+				for (const repo of config.repositories) {
+					if (repo.linearWorkspaceId === tokens.linearWorkspaceId) {
+						repo.linearToken = tokens.linearToken;
+						if (tokens.linearRefreshToken) {
+							repo.linearRefreshToken = tokens.linearRefreshToken;
+						}
+						if (tokens.linearWorkspaceName) {
+							repo.linearWorkspaceName = tokens.linearWorkspaceName;
+						}
+					}
+				}
+			}
+
+			await writeFile(this.configPath, JSON.stringify(config, null, "\t"));
+			console.log(
+				`[EdgeWorker] OAuth tokens saved to config for workspace ${tokens.linearWorkspaceId}`,
+			);
+		} catch (error) {
+			console.error("[EdgeWorker] Failed to save OAuth tokens:", error);
 		}
 	}
 }
