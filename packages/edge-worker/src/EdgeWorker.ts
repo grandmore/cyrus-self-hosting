@@ -4724,6 +4724,10 @@ ${newComment ? `New comment to address:\n${newComment.body}\n\n` : ""}Please ana
 	): Record<string, McpServerConfig> {
 		// Always inject the Linear MCP servers with the repository's token
 		// https://linear.app/docs/mcp
+		const its = this.issueTrackers.get(
+			repository.id,
+		) as LinearIssueTrackerService;
+		const lc = its.getClient();
 		const mcpConfig: Record<string, McpServerConfig> = {
 			linear: {
 				type: "http",
@@ -4732,7 +4736,7 @@ ${newComment ? `New comment to address:\n${newComment.body}\n\n` : ""}Please ana
 					Authorization: `Bearer ${repository.linearToken}`,
 				},
 			},
-			"cyrus-tools": createCyrusToolsServer(repository.linearToken, {
+			"cyrus-tools": createCyrusToolsServer(lc, {
 				parentSessionId,
 				onSessionCreated: (childSessionId, parentId) => {
 					console.log(
