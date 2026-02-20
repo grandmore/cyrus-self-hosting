@@ -155,6 +155,7 @@ type CyrusToolsMcpContext = {
 type CyrusToolsMcpContextEntry = {
 	contextId: string;
 	linearToken: string;
+	linearClient: import("@linear/sdk").LinearClient;
 	parentSessionId?: string;
 	prebuiltServer?: ReturnType<typeof createCyrusToolsServer>;
 	createdAt: number;
@@ -3984,7 +3985,7 @@ ${taskInstructions}
 				const sdkServer =
 					context.prebuiltServer ||
 					createCyrusToolsServer(
-						context.linearToken,
+						context.linearClient,
 						this.createCyrusToolsOptions(context.parentSessionId),
 					);
 				context.prebuiltServer = undefined;
@@ -4206,14 +4207,19 @@ ${taskInstructions}
 
 		// Prebuild one SDK server for this context so callback wiring remains deterministic.
 		// If the client reconnects and needs another server, the endpoint creates a fresh one.
+		const its = this.issueTrackers.get(
+			repository.id,
+		) as LinearIssueTrackerService;
+		const lc = its.getClient();
 		const prebuiltServer = createCyrusToolsServer(
-			repository.linearToken,
+			lc,
 			this.createCyrusToolsOptions(parentSessionId),
 		);
 
 		this.cyrusToolsMcpContexts.set(contextId, {
 			contextId,
 			linearToken: repository.linearToken,
+			linearClient: lc,
 			parentSessionId,
 			prebuiltServer,
 			createdAt: Date.now(),
